@@ -1,15 +1,23 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
 
 	"github.com/nextflow/whatsmeow-gateway/internal/config"
+	"github.com/nextflow/whatsmeow-gateway/internal/store"
 )
 
 func main() {
 	cfg := config.Load()
+
+	st, err := store.Open(context.Background(), cfg.PGDSN)
+	if err != nil {
+		log.Fatalf("store open error: %v", err)
+	}
+	_ = st
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
