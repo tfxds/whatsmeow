@@ -20,7 +20,12 @@ type Session struct {
 	Client       *whatsmeow.Client
 	LastQR       string
 	Connected    bool
+	qrRefreshes  int // quantas vezes o canal de QR foi reaberto (cap anti-loop)
 }
+
+// maxQRRefreshes limita a auto-renovação do canal de QR (cada canal do whatsmeow
+// emite ~5-6 códigos antes de expirar; ~30 reaberturas = janela longa de QR vivo).
+const maxQRRefreshes = 30
 
 // Manager owns all live sessions and their lifecycle.
 type Manager struct {
@@ -45,11 +50,17 @@ func NewManager(st *store.Store, d *webhook.Dispatcher) *Manager {
 // a new one. If the device is not yet paired it starts the QR flow.
 func (m *Manager) Connect(ctx context.Context, connectionID, tenantID string) (*Session, error) {
 	m.mu.RLock()
-	if s, ok := m.sessions[connectionID]; ok {
-		m.mu.RUnlock()
-		return s, nil
-	}
+	existing, ok := m.sessions[connectionID]
 	m.mu.RUnlock()
+	if ok {
+		// Já pareado/conectado → reaproveita. Se NÃO pareado (QR pendente/expirado),
+		// descarta e recria pra gerar um QR fresco — senão o scan tenta um QR morto.
+		if existing.Client.IsLoggedIn() || existing.Connected {
+			return existing, nil
+		}
+		existing.Client.Disconnect()
+		m.remove(connectionID)
+	}
 
 	dev := m.store.Container.NewDevice()
 	cli := whatsmeow.NewClient(dev, m.log)
@@ -96,6 +107,7 @@ func (m *Manager) consumeQR(connectionID string, qrChan <-chan whatsmeow.QRChann
 				s.Connected = false
 			}
 			m.mu.Unlock()
+			m.log.Infof("QR code emitido para %s (len=%d)", connectionID, len(evt.Code))
 		case "success":
 			m.mu.Lock()
 			if s, ok := m.sessions[connectionID]; ok {
@@ -103,11 +115,44 @@ func (m *Manager) consumeQR(connectionID string, qrChan <-chan whatsmeow.QRChann
 				s.Connected = true
 			}
 			m.mu.Unlock()
+			m.log.Infof("QR SUCCESS — pareado %s", connectionID)
+			return
 		default:
-			// "timeout", "error", etc. — leave LastQR as-is; status reflects reality.
-			m.log.Infof("QR channel for %s ended with event %q", connectionID, evt.Event)
+			// "timeout", "error", etc.
+			m.log.Infof("QR channel de %s encerrou com evento %q", connectionID, evt.Event)
 		}
 	}
+
+	// Canal de QR fechou. Se a sessão ainda existe e NÃO pareou, reabre um canal fresco
+	// (igual WuzAPI/WhatsApp Web, que ficam renovando o QR) até parear ou bater o cap.
+	m.mu.RLock()
+	s, ok := m.sessions[connectionID]
+	m.mu.RUnlock()
+	if !ok {
+		return
+	}
+	if s.Connected || s.Client.IsLoggedIn() {
+		return
+	}
+	if s.qrRefreshes >= maxQRRefreshes {
+		m.log.Infof("QR de %s atingiu o cap de renovações (%d) — parando", connectionID, maxQRRefreshes)
+		return
+	}
+	tenantID := s.TenantID
+	refreshes := s.qrRefreshes + 1
+	m.log.Infof("QR channel de %s expirou sem parear → renovando (%d/%d)", connectionID, refreshes, maxQRRefreshes)
+	s.Client.Disconnect()
+	m.remove(connectionID)
+	go func() {
+		sess, err := m.Connect(context.Background(), connectionID, tenantID)
+		if err != nil {
+			m.log.Warnf("renovação de QR de %s falhou: %v", connectionID, err)
+			return
+		}
+		m.mu.Lock()
+		sess.qrRefreshes = refreshes
+		m.mu.Unlock()
+	}()
 }
 
 // Get returns the session for connectionID, if any.
