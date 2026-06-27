@@ -48,46 +48,62 @@ func normalizeMessage(connID, tenantID string, m *events.Message) map[string]any
 		}
 		if img := wa.GetImageMessage(); img != nil {
 			msgMap["imageMessage"] = map[string]any{
-				"mimetype":   img.GetMimetype(),
-				"caption":    img.GetCaption(),
-				"url":        img.GetURL(),
-				"mediaKey":   img.GetMediaKey(),
-				"directPath": img.GetDirectPath(),
+				"mimetype":      img.GetMimetype(),
+				"caption":       img.GetCaption(),
+				"url":           img.GetURL(),
+				"mediaKey":      img.GetMediaKey(),
+				"directPath":    img.GetDirectPath(),
+				"fileEncSHA256": img.GetFileEncSHA256(),
+				"fileSHA256":    img.GetFileSHA256(),
+				"fileLength":    img.GetFileLength(),
 			}
 		}
 		if vid := wa.GetVideoMessage(); vid != nil {
 			msgMap["videoMessage"] = map[string]any{
-				"mimetype":   vid.GetMimetype(),
-				"caption":    vid.GetCaption(),
-				"url":        vid.GetURL(),
-				"mediaKey":   vid.GetMediaKey(),
-				"directPath": vid.GetDirectPath(),
+				"mimetype":      vid.GetMimetype(),
+				"caption":       vid.GetCaption(),
+				"url":           vid.GetURL(),
+				"mediaKey":      vid.GetMediaKey(),
+				"directPath":    vid.GetDirectPath(),
+				"fileEncSHA256": vid.GetFileEncSHA256(),
+				"fileSHA256":    vid.GetFileSHA256(),
+				"fileLength":    vid.GetFileLength(),
 			}
 		}
 		if doc := wa.GetDocumentMessage(); doc != nil {
 			msgMap["documentMessage"] = map[string]any{
-				"mimetype":   doc.GetMimetype(),
-				"caption":    doc.GetCaption(),
-				"fileName":   doc.GetFileName(),
-				"url":        doc.GetURL(),
-				"mediaKey":   doc.GetMediaKey(),
-				"directPath": doc.GetDirectPath(),
+				"mimetype":      doc.GetMimetype(),
+				"caption":       doc.GetCaption(),
+				"fileName":      doc.GetFileName(),
+				"url":           doc.GetURL(),
+				"mediaKey":      doc.GetMediaKey(),
+				"directPath":    doc.GetDirectPath(),
+				"fileEncSHA256": doc.GetFileEncSHA256(),
+				"fileSHA256":    doc.GetFileSHA256(),
+				"fileLength":    doc.GetFileLength(),
 			}
 		}
 		if aud := wa.GetAudioMessage(); aud != nil {
 			msgMap["audioMessage"] = map[string]any{
-				"mimetype":   aud.GetMimetype(),
-				"url":        aud.GetURL(),
-				"mediaKey":   aud.GetMediaKey(),
-				"directPath": aud.GetDirectPath(),
+				"mimetype":      aud.GetMimetype(),
+				"url":           aud.GetURL(),
+				"mediaKey":      aud.GetMediaKey(),
+				"directPath":    aud.GetDirectPath(),
+				"fileEncSHA256": aud.GetFileEncSHA256(),
+				"fileSHA256":    aud.GetFileSHA256(),
+				"fileLength":    aud.GetFileLength(),
+				"ptt":           aud.GetPTT(),
 			}
 		}
 		if stk := wa.GetStickerMessage(); stk != nil {
 			msgMap["stickerMessage"] = map[string]any{
-				"mimetype":   stk.GetMimetype(),
-				"url":        stk.GetURL(),
-				"mediaKey":   stk.GetMediaKey(),
-				"directPath": stk.GetDirectPath(),
+				"mimetype":      stk.GetMimetype(),
+				"url":           stk.GetURL(),
+				"mediaKey":      stk.GetMediaKey(),
+				"directPath":    stk.GetDirectPath(),
+				"fileEncSHA256": stk.GetFileEncSHA256(),
+				"fileSHA256":    stk.GetFileSHA256(),
+				"fileLength":    stk.GetFileLength(),
 			}
 		}
 	}
