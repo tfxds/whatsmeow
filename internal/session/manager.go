@@ -127,41 +127,14 @@ func (m *Manager) consumeQR(connectionID string, qrChan <-chan whatsmeow.QRChann
 			m.log.Infof("QR SUCCESS — pareado %s", connectionID)
 			return
 		default:
-			// "timeout", "error", etc.
+			// "timeout", "error", etc. — o canal naturalmente encerra; o whatsmeow já
+			// emitiu vários códigos ao longo de ~160s. NÃO recriar aqui (auto-refresh
+			// causava churn de reconexão a cada ~5s que o WhatsApp derrubava). Pra um QR
+			// novo após o timeout, o usuário clica "QR" de novo (Connect recria).
 			m.log.Infof("QR channel de %s encerrou com evento %q", connectionID, evt.Event)
 		}
 	}
-
-	// Canal de QR fechou. Se a sessão ainda existe e NÃO pareou, reabre um canal fresco
-	// (igual WuzAPI/WhatsApp Web, que ficam renovando o QR) até parear ou bater o cap.
-	m.mu.RLock()
-	s, ok := m.sessions[connectionID]
-	m.mu.RUnlock()
-	if !ok {
-		return
-	}
-	if s.Connected || s.Client.IsLoggedIn() {
-		return
-	}
-	if s.qrRefreshes >= maxQRRefreshes {
-		m.log.Infof("QR de %s atingiu o cap de renovações (%d) — parando", connectionID, maxQRRefreshes)
-		return
-	}
-	tenantID := s.TenantID
-	refreshes := s.qrRefreshes + 1
-	m.log.Infof("QR channel de %s expirou sem parear → renovando (%d/%d)", connectionID, refreshes, maxQRRefreshes)
-	s.Client.Disconnect()
-	m.remove(connectionID)
-	go func() {
-		sess, err := m.Connect(context.Background(), connectionID, tenantID)
-		if err != nil {
-			m.log.Warnf("renovação de QR de %s falhou: %v", connectionID, err)
-			return
-		}
-		m.mu.Lock()
-		sess.qrRefreshes = refreshes
-		m.mu.Unlock()
-	}()
+	m.log.Infof("QR channel de %s fechou", connectionID)
 }
 
 // Get returns the session for connectionID, if any.
