@@ -8,6 +8,7 @@ import (
 	"github.com/nextflow/whatsmeow-gateway/internal/store"
 	"github.com/nextflow/whatsmeow-gateway/internal/webhook"
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
 )
@@ -147,10 +148,95 @@ func (m *Manager) attachHandlers(sess *Session) {
 			m.dispatcher.Send(conn.WebhookURL, normalizeMessage(connID, tenantID, v))
 		case *events.Connected:
 			m.setConnected(connID, true)
+			m.persistJID(connID)
+		case *events.PairSuccess:
+			m.persistJID(connID)
 		case *events.LoggedOut:
 			m.setConnected(connID, false)
 		}
 	})
+}
+
+// persistJID writes the paired device JID into the connections table so the
+// session can be restored on the next boot without re-scanning the QR code.
+func (m *Manager) persistJID(connectionID string) {
+	m.mu.RLock()
+	sess, ok := m.sessions[connectionID]
+	m.mu.RUnlock()
+	if !ok || sess.Client.Store == nil || sess.Client.Store.ID == nil {
+		return
+	}
+	jid := sess.Client.Store.ID.String()
+
+	conn := m.lookupConn(connectionID)
+	if conn == nil {
+		return
+	}
+	if conn.JID == jid {
+		return // already persisted
+	}
+	conn.JID = jid
+	if err := m.store.UpsertConn(context.Background(), *conn); err != nil {
+		m.log.Warnf("persistJID %s: %v", connectionID, err)
+		return
+	}
+	m.log.Infof("persisted JID %s for connection %s", jid, connectionID)
+}
+
+// RestoreAll reconnects every previously-paired connection on boot. Each
+// connection is restored independently: a failure on one is logged and does not
+// abort the others.
+func (m *Manager) RestoreAll(ctx context.Context) error {
+	conns, err := m.store.ListConns(ctx)
+	if err != nil {
+		return fmt.Errorf("restore: list conns: %w", err)
+	}
+
+	restored := 0
+	for _, conn := range conns {
+		if conn.JID == "" {
+			continue // never paired → nothing to restore (waits for QR flow)
+		}
+		if _, ok := m.Get(conn.ConnectionID); ok {
+			continue // already live
+		}
+
+		jid, err := types.ParseJID(conn.JID)
+		if err != nil {
+			m.log.Errorf("restore %s: bad stored JID %q: %v", conn.ConnectionID, conn.JID, err)
+			continue
+		}
+
+		dev, err := m.store.Container.GetDevice(ctx, jid)
+		if err != nil {
+			m.log.Errorf("restore %s: get device: %v", conn.ConnectionID, err)
+			continue
+		}
+		if dev == nil {
+			m.log.Warnf("restore %s: no device for JID %s (skipping)", conn.ConnectionID, conn.JID)
+			continue
+		}
+
+		cli := whatsmeow.NewClient(dev, m.log)
+		sess := &Session{ConnectionID: conn.ConnectionID, TenantID: conn.TenantID, Client: cli}
+		m.attachHandlers(sess)
+
+		m.mu.Lock()
+		m.sessions[conn.ConnectionID] = sess
+		m.mu.Unlock()
+
+		if err := cli.Connect(); err != nil {
+			m.remove(conn.ConnectionID)
+			m.log.Errorf("restore %s: connect: %v", conn.ConnectionID, err)
+			continue
+		}
+		m.setConnected(conn.ConnectionID, true)
+		restored++
+		m.log.Infof("restored connection %s (JID %s)", conn.ConnectionID, conn.JID)
+	}
+
+	m.log.Infof("RestoreAll: restored %d/%d connection(s)", restored, len(conns))
+	return nil
 }
 
 // lookupConn fetches the stored connection row (webhook URL, token, etc.).

@@ -22,6 +22,11 @@ func main() {
 	}
 	mgr := session.NewManager(st, webhook.New())
 
+	// Reconnect previously-paired sessions on boot (non-fatal on failure).
+	if err := mgr.RestoreAll(context.Background()); err != nil {
+		log.Printf("restore sessions: %v", err)
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
