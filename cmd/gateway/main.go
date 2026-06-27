@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/nextflow/whatsmeow-gateway/internal/api"
 	"github.com/nextflow/whatsmeow-gateway/internal/config"
 	"github.com/nextflow/whatsmeow-gateway/internal/session"
 	"github.com/nextflow/whatsmeow-gateway/internal/store"
@@ -20,7 +21,6 @@ func main() {
 		log.Fatalf("store open error: %v", err)
 	}
 	mgr := session.NewManager(st, webhook.New())
-	_ = mgr
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -28,6 +28,9 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})
+
+	restAPI := &api.API{Mgr: mgr, Store: st}
+	restAPI.Register(mux)
 
 	addr := ":" + cfg.Port
 	log.Printf("gateway listening on %s", addr)
