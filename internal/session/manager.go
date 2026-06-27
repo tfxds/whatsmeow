@@ -223,6 +223,12 @@ func (m *Manager) attachHandlers(sess *Session) {
 		case *events.Connected:
 			m.setConnected(connID, true)
 			m.persistJID(connID)
+			// CRÍTICO p/ "digitando…" e tique azul (read receipt): o whatsmeow só ENTREGA
+			// chat presence (composing) e recibos se o cliente tiver mandado SendPresence
+			// (Available) ao menos uma vez após conectar. Sem isso, MarkRead/typing viram no-op.
+			if err := sess.Client.SendPresence(context.Background(), types.PresenceAvailable); err != nil {
+				m.log.Warnf("SendPresence(available) %s: %v", connID, err)
+			}
 		case *events.PairSuccess:
 			m.persistJID(connID)
 		case *events.LoggedOut:
