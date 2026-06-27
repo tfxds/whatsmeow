@@ -49,10 +49,13 @@ func (a *API) handleSendText(w http.ResponseWriter, r *http.Request) {
 	}
 
 	msg := &waE2E.Message{Conversation: proto.String(req.Body)}
-	if _, err := sess.Client.SendMessage(r.Context(), jid, msg); err != nil {
+	resp, err := sess.Client.SendMessage(r.Context(), jid, msg)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"success": true})
+	// Retorna o ID do WhatsApp pra o NextFlow salvar a msg do agente com o id real
+	// (senão reação/recibo na msg do agente não casam — ficam com o UUID interno).
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "id": resp.ID})
 }
