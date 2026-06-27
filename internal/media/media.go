@@ -88,6 +88,29 @@ func SendImage(ctx context.Context, cli *whatsmeow.Client, to types.JID, url str
 	return send(ctx, cli, to, msg)
 }
 
+// BuildImageMessage uploads an image (URL or raw data) and returns its ImageMessage
+// proto WITHOUT sending — usado como header/card de mensagens interativas (carrossel).
+func BuildImageMessage(ctx context.Context, cli *whatsmeow.Client, url string, data []byte, dataMime string) (*waE2E.ImageMessage, error) {
+	raw, mime, err := resolve(ctx, url, data, dataMime)
+	if err != nil {
+		return nil, err
+	}
+	mime = firstNonEmpty(mime, "image/jpeg")
+	up, err := cli.Upload(ctx, raw, whatsmeow.MediaImage)
+	if err != nil {
+		return nil, fmt.Errorf("media: upload image: %w", err)
+	}
+	return &waE2E.ImageMessage{
+		Mimetype:      proto.String(mime),
+		URL:           proto.String(up.URL),
+		DirectPath:    proto.String(up.DirectPath),
+		MediaKey:      up.MediaKey,
+		FileEncSHA256: up.FileEncSHA256,
+		FileSHA256:    up.FileSHA256,
+		FileLength:    proto.Uint64(up.FileLength),
+	}, nil
+}
+
 // SendVideo uploads the given video (URL or raw data) and sends it.
 func SendVideo(ctx context.Context, cli *whatsmeow.Client, to types.JID, url string, data []byte, dataMime, caption string) (string, error) {
 	raw, mime, err := resolve(ctx, url, data, dataMime)

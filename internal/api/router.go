@@ -37,6 +37,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/chat/edit", a.handleEdit)         // POST {connectionId, Phone, MessageID, Body}
 	mux.HandleFunc("/chat/delete", a.handleDelete)     // POST {connectionId, Phone, MessageID}
 	mux.HandleFunc("/chat/react", a.handleReact)       // POST {connectionId, Phone, MessageID, Reaction, FromMe}
+	mux.HandleFunc("/chat/send/interactive", a.handleSendInteractive) // POST {connectionId, Phone, Type, Body, Buttons|Sections|Cards}
 }
 
 // writeJSON encodes v as a JSON response with the given status code.
