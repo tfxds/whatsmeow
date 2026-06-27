@@ -28,6 +28,11 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/chat/send/document", a.handleSendMedia(kindDocument)) // POST {connectionId, Phone, Document, Caption, FileName}
 	mux.HandleFunc("/chat/send/audio", a.handleSendMedia(kindAudio))       // POST {connectionId, Phone, Audio}
 	mux.HandleFunc("/chat/download", a.handleDownload)                     // POST {connectionId, kind, directPath, mediaKey, ...}
+
+	// Utilities (TASK 8).
+	mux.HandleFunc("/user/check", a.handleUserCheck)   // POST {connectionId, Phone:[...]}
+	mux.HandleFunc("/chat/markread", a.handleMarkRead) // POST {connectionId, Phone, MessageID}
+	mux.HandleFunc("/chat/presence", a.handlePresence) // POST {connectionId, Phone, State}
 }
 
 // writeJSON encodes v as a JSON response with the given status code.
