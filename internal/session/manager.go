@@ -3,7 +3,9 @@ package session
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/nextflow/whatsmeow-gateway/internal/store"
 	"github.com/nextflow/whatsmeow-gateway/internal/webhook"
@@ -104,13 +106,17 @@ func (m *Manager) consumeQR(connectionID string, qrChan <-chan whatsmeow.QRChann
 	for evt := range qrChan {
 		switch evt.Event {
 		case "code":
+			// whatsmeow (pair.go) emite o QR como URL "https://wa.me/settings/linked_devices#2@...".
+			// O scanner "Conectar aparelho" do WhatsApp lê o código CRU "2@..." — tirar o prefixo
+			// (igual WuzAPI faz), senão NENHUM WhatsApp lê o QR.
+			raw := strings.TrimPrefix(evt.Code, "https://wa.me/settings/linked_devices#")
 			m.mu.Lock()
 			if s, ok := m.sessions[connectionID]; ok {
-				s.LastQR = evt.Code
+				s.LastQR = raw
 				s.Connected = false
 			}
 			m.mu.Unlock()
-			m.log.Infof("QR code emitido para %s (len=%d)", connectionID, len(evt.Code))
+			m.log.Infof("QR code emitido para %s (len=%d)", connectionID, len(raw))
 		case "success":
 			m.mu.Lock()
 			if s, ok := m.sessions[connectionID]; ok {
@@ -159,6 +165,44 @@ func (m *Manager) consumeQR(connectionID string, qrChan <-chan whatsmeow.QRChann
 }
 
 // Get returns the session for connectionID, if any.
+// PairCode inicia o pareamento por CÓDIGO (PairPhone) — alternativa ao QR. Cria a sessão,
+// conecta e retorna o código de 8 chars que o usuário digita em "Conectar com número de
+// telefone". Também serve de diagnóstico: se a Meta/WhatsApp bloquear o número, PairPhone
+// retorna erro (em vez de código). phone = só dígitos com DDI (ex 5548...).
+func (m *Manager) PairCode(connectionID, tenantID, phone string) (string, error) {
+	m.mu.RLock()
+	existing, ok := m.sessions[connectionID]
+	m.mu.RUnlock()
+	if ok {
+		if existing.Client.IsLoggedIn() {
+			return "", fmt.Errorf("conexão já pareada")
+		}
+		existing.Client.Disconnect()
+		m.remove(connectionID)
+	}
+
+	dev := m.store.Container.NewDevice()
+	cli := whatsmeow.NewClient(dev, m.log)
+	sess := &Session{ConnectionID: connectionID, TenantID: tenantID, Client: cli}
+	m.attachHandlers(sess)
+	m.mu.Lock()
+	m.sessions[connectionID] = sess
+	m.mu.Unlock()
+
+	if err := cli.Connect(); err != nil {
+		m.remove(connectionID)
+		return "", fmt.Errorf("connect: %w", err)
+	}
+	time.Sleep(1500 * time.Millisecond) // doc do whatsmeow: aguardar o websocket estabelecer
+	code, err := cli.PairPhone(context.Background(), phone, true, whatsmeow.PairClientChrome, "Chrome (Linux)")
+	if err != nil {
+		m.remove(connectionID)
+		return "", fmt.Errorf("pair phone: %w", err)
+	}
+	m.log.Infof("PairCode gerado para %s (phone %s)", connectionID, phone)
+	return code, nil
+}
+
 func (m *Manager) Get(connectionID string) (*Session, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

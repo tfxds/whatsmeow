@@ -18,6 +18,7 @@ type API struct {
 // Register wires the REST endpoints onto the given mux.
 func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/session/connect", a.handleConnect) // POST {connectionId, tenantId, webhookUrl, token}
+	mux.HandleFunc("/session/pair-code", a.handlePairCode)
 	mux.HandleFunc("/session/qr", a.handleQR)           // GET ?connectionId=
 	mux.HandleFunc("/session/status", a.handleStatus)   // GET ?connectionId=
 	mux.HandleFunc("/chat/send/text", a.handleSendText) // POST {connectionId, Phone, Body}
