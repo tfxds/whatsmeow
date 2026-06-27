@@ -74,7 +74,10 @@ func (m *Manager) Connect(ctx context.Context, connectionID, tenantID string) (*
 
 	if cli.Store.ID == nil {
 		// Not paired yet → start the QR pairing flow.
-		qrChan, err := cli.GetQRChannel(ctx)
+		// CRÍTICO: o canal de QR e o cliente vivem ALÉM do request HTTP — usar o contexto
+		// do request (cancelado quando /connect retorna) fechava o canal em ~1s e o QR
+		// nunca pareava. Sempre context.Background() pra esse fluxo de longa duração.
+		qrChan, err := cli.GetQRChannel(context.Background())
 		if err != nil {
 			m.remove(connectionID)
 			return nil, fmt.Errorf("get qr channel: %w", err)
