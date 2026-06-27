@@ -1,0 +1,13 @@
+[Unit]
+Description=NextFlow WhatsApp Gateway (whatsmeow)
+After=network.target docker.service
+
+[Service]
+EnvironmentFile=/etc/whatsmeow-gateway.env
+ExecStart=/usr/local/bin/whatsmeow-gateway
+Restart=always
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target

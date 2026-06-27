@@ -1,0 +1,16 @@
+# Postgres dedicado do device store do gateway (sessões whatsmeow vivem aqui).
+# Migração: faça pg_dump deste DB e restaure no destino → NÃO precisa reparear.
+services:
+  postgres-whatsmeow:
+    image: postgres:17
+    container_name: postgres-whatsmeow
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: "${WM_PG_PASSWORD:?set WM_PG_PASSWORD}"
+      POSTGRES_DB: whatsmeow
+    ports:
+      - "127.0.0.1:5433:5432"   # só localhost
+    volumes:
+      - whatsmeow_pg:/var/lib/postgresql/data
+volumes:
+  whatsmeow_pg:
