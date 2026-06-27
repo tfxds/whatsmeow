@@ -46,6 +46,20 @@ func normalizeMessage(connID, tenantID string, m *events.Message) map[string]any
 		if ext := wa.GetExtendedTextMessage(); ext != nil {
 			msgMap["extendedTextMessage"] = map[string]any{"text": ext.GetText()}
 		}
+		if react := wa.GetReactionMessage(); react != nil {
+			// Reação do cliente: o webhook do NextFlow lê reactionMessage.key.id + .text
+			// e atualiza chat_messages.reaction. text vazio = reação removida.
+			k := react.GetKey()
+			msgMap["reactionMessage"] = map[string]any{
+				"text": react.GetText(),
+				"key": map[string]any{
+					"id":        k.GetID(),
+					"ID":        k.GetID(),
+					"fromMe":    k.GetFromMe(),
+					"remoteJid": k.GetRemoteJID(),
+				},
+			}
+		}
 		if img := wa.GetImageMessage(); img != nil {
 			msgMap["imageMessage"] = map[string]any{
 				"mimetype":      img.GetMimetype(),
