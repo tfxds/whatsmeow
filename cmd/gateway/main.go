@@ -7,7 +7,9 @@ import (
 	"net/http"
 
 	"github.com/nextflow/whatsmeow-gateway/internal/config"
+	"github.com/nextflow/whatsmeow-gateway/internal/session"
 	"github.com/nextflow/whatsmeow-gateway/internal/store"
+	"github.com/nextflow/whatsmeow-gateway/internal/webhook"
 )
 
 func main() {
@@ -17,7 +19,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("store open error: %v", err)
 	}
-	_ = st
+	mgr := session.NewManager(st, webhook.New())
+	_ = mgr
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
