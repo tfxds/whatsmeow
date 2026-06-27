@@ -21,6 +21,13 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/session/qr", a.handleQR)           // GET ?connectionId=
 	mux.HandleFunc("/session/status", a.handleStatus)   // GET ?connectionId=
 	mux.HandleFunc("/chat/send/text", a.handleSendText) // POST {connectionId, Phone, Body}
+
+	// Media (TASK 6): outbound send + inbound download.
+	mux.HandleFunc("/chat/send/image", a.handleSendMedia(kindImage))       // POST {connectionId, Phone, Image, Caption}
+	mux.HandleFunc("/chat/send/video", a.handleSendMedia(kindVideo))       // POST {connectionId, Phone, Video, Caption}
+	mux.HandleFunc("/chat/send/document", a.handleSendMedia(kindDocument)) // POST {connectionId, Phone, Document, Caption, FileName}
+	mux.HandleFunc("/chat/send/audio", a.handleSendMedia(kindAudio))       // POST {connectionId, Phone, Audio}
+	mux.HandleFunc("/chat/download", a.handleDownload)                     // POST {connectionId, kind, directPath, mediaKey, ...}
 }
 
 // writeJSON encodes v as a JSON response with the given status code.
