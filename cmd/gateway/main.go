@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/nextflow/whatsmeow-gateway/internal/api"
+	"github.com/nextflow/whatsmeow-gateway/internal/call"
 	"github.com/nextflow/whatsmeow-gateway/internal/config"
 	"github.com/nextflow/whatsmeow-gateway/internal/session"
 	"github.com/nextflow/whatsmeow-gateway/internal/store"
@@ -34,7 +35,8 @@ func main() {
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})
 
-	restAPI := &api.API{Mgr: mgr, Store: st}
+	calls := call.NewManager()
+	restAPI := &api.API{Mgr: mgr, Store: st, Calls: calls}
 	restAPI.Register(mux)
 
 	addr := ":" + cfg.Port

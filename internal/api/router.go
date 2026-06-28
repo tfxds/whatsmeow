@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/nextflow/whatsmeow-gateway/internal/call"
 	"github.com/nextflow/whatsmeow-gateway/internal/session"
 	"github.com/nextflow/whatsmeow-gateway/internal/store"
 )
@@ -13,6 +14,7 @@ import (
 type API struct {
 	Mgr   *session.Manager
 	Store *store.Store
+	Calls *call.Manager
 }
 
 // Register wires the REST endpoints onto the given mux.
@@ -39,6 +41,10 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/chat/delete", a.handleDelete)     // POST {connectionId, Phone, MessageID}
 	mux.HandleFunc("/chat/react", a.handleReact)       // POST {connectionId, Phone, MessageID, Reaction, FromMe}
 	mux.HandleFunc("/chat/send/interactive", a.handleSendInteractive) // POST {connectionId, Phone, Type, Body, Buttons|Sections|Cards}
+
+	// Call (PoC): outbound áudio + hangup.
+	mux.HandleFunc("/call/start", a.handleCallStart)   // POST {connectionId, Phone}
+	mux.HandleFunc("/call/hangup", a.handleCallHangup) // POST {connectionId}
 }
 
 // writeJSON encodes v as a JSON response with the given status code.
