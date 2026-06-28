@@ -3,9 +3,23 @@ package session
 import (
 	"time"
 
+	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 )
+
+// ctxInfoMap extrai stanzaId/participant do ContextInfo (msg citada/responder).
+// Retorna nil quando não há citação. O webhook do NextFlow lê
+// message.<sub>.contextInfo.stanzaId → grava reply_to_id.
+func ctxInfoMap(ci *waE2E.ContextInfo) map[string]any {
+	if ci == nil || ci.GetStanzaID() == "" {
+		return nil
+	}
+	return map[string]any{
+		"stanzaId":    ci.GetStanzaID(),
+		"participant": ci.GetParticipant(),
+	}
+}
 
 // jidStr renders a JID as its canonical string ("number@server"), or "" if empty.
 func jidStr(j types.JID) string {
@@ -74,7 +88,11 @@ func normalizeMessage(connID, tenantID string, m *events.Message) map[string]any
 			msgMap["conversation"] = txt
 		}
 		if ext := wa.GetExtendedTextMessage(); ext != nil {
-			msgMap["extendedTextMessage"] = map[string]any{"text": ext.GetText()}
+			em := map[string]any{"text": ext.GetText()}
+			if c := ctxInfoMap(ext.GetContextInfo()); c != nil {
+				em["contextInfo"] = c
+			}
+			msgMap["extendedTextMessage"] = em
 		}
 		if react := wa.GetReactionMessage(); react != nil {
 			// Reação do cliente: o webhook do NextFlow lê reactionMessage.key.id + .text
@@ -101,6 +119,9 @@ func normalizeMessage(connID, tenantID string, m *events.Message) map[string]any
 				"fileSHA256":    img.GetFileSHA256(),
 				"fileLength":    img.GetFileLength(),
 			}
+			if c := ctxInfoMap(img.GetContextInfo()); c != nil {
+				msgMap["imageMessage"].(map[string]any)["contextInfo"] = c
+			}
 		}
 		if vid := wa.GetVideoMessage(); vid != nil {
 			msgMap["videoMessage"] = map[string]any{
@@ -112,6 +133,9 @@ func normalizeMessage(connID, tenantID string, m *events.Message) map[string]any
 				"fileEncSHA256": vid.GetFileEncSHA256(),
 				"fileSHA256":    vid.GetFileSHA256(),
 				"fileLength":    vid.GetFileLength(),
+			}
+			if c := ctxInfoMap(vid.GetContextInfo()); c != nil {
+				msgMap["videoMessage"].(map[string]any)["contextInfo"] = c
 			}
 		}
 		if doc := wa.GetDocumentMessage(); doc != nil {
@@ -126,6 +150,9 @@ func normalizeMessage(connID, tenantID string, m *events.Message) map[string]any
 				"fileSHA256":    doc.GetFileSHA256(),
 				"fileLength":    doc.GetFileLength(),
 			}
+			if c := ctxInfoMap(doc.GetContextInfo()); c != nil {
+				msgMap["documentMessage"].(map[string]any)["contextInfo"] = c
+			}
 		}
 		if aud := wa.GetAudioMessage(); aud != nil {
 			msgMap["audioMessage"] = map[string]any{
@@ -137,6 +164,9 @@ func normalizeMessage(connID, tenantID string, m *events.Message) map[string]any
 				"fileSHA256":    aud.GetFileSHA256(),
 				"fileLength":    aud.GetFileLength(),
 				"ptt":           aud.GetPTT(),
+			}
+			if c := ctxInfoMap(aud.GetContextInfo()); c != nil {
+				msgMap["audioMessage"].(map[string]any)["contextInfo"] = c
 			}
 		}
 		if stk := wa.GetStickerMessage(); stk != nil {
