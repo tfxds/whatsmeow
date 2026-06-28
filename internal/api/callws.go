@@ -94,12 +94,12 @@ const micWorkletJS = `class Mic extends AudioWorkletProcessor{
 registerProcessor('mic',Mic)`
 
 const playWorkletJS = `class Play extends AudioWorkletProcessor{
- constructor(){super();this.cap=32768;this.buf=new Float32Array(this.cap);this.r=0;this.w=0;this.size=0;this.hi=8000;
+ constructor(){super();this.cap=32768;this.buf=new Float32Array(this.cap);this.r=0;this.w=0;this.size=0;this.hi=2400;
   this.port.onmessage=e=>{const s=e.data;const n=s.length;
    if(this.size+n>this.cap){const d=this.size+n-this.cap;this.r=(this.r+d)%this.cap;this.size-=d}
    for(let i=0;i<n;i++){this.buf[this.w]=s[i];this.w=(this.w+1)%this.cap}this.size+=n;
    if(this.size>this.hi){const d=this.size-this.hi;this.r=(this.r+d)%this.cap;this.size-=d}}}
- process(out){const o=out[0][0];for(let i=0;i<o.length;i++){if(this.size>0){o[i]=this.buf[this.r];this.r=(this.r+1)%this.cap;this.size--}else o[i]=0}return true}}
+ process(inputs,outputs){const o=outputs[0][0];if(!o)return true;for(let i=0;i<o.length;i++){if(this.size>0){o[i]=this.buf[this.r];this.r=(this.r+1)%this.cap;this.size--}else o[i]=0}return true}}
 registerProcessor('play',Play)`
 
 // callTestPageHTML tem 2 %s (micWorkletJS, playWorkletJS). Todo % literal está escapado como %%.
@@ -126,16 +126,17 @@ const callTestPageHTML = `<!doctype html>
 <div>recebido <div class="lvl"><i id="rxLvl"></i></div></div>
 <script>
 const $=id=>document.getElementById(id);
-let ws,ac,micNode,playNode,micStream;
+let ws,ac,pac,micNode,playNode,micStream;
 function log(m){$('status').textContent=m}
 const micJS=%s;
 const playJS=%s;
 async function dial(){
  const conn=$('conn').value.trim(),token=$('token').value.trim(),phone=$('phone').value.replace(/\D/g,'');
  if(!token||!phone){log('preencha token e numero');return}
- ac=new AudioContext({sampleRate:48000});
+ ac=new AudioContext({sampleRate:48000});   // mic (uplink): decima 48k->16k
+ pac=new AudioContext({sampleRate:16000});  // playback (downlink): 16k nativo (sem acelerar)
  await ac.audioWorklet.addModule(URL.createObjectURL(new Blob([micJS],{type:'text/javascript'})));
- await ac.audioWorklet.addModule(URL.createObjectURL(new Blob([playJS],{type:'text/javascript'})));
+ await pac.audioWorklet.addModule(URL.createObjectURL(new Blob([playJS],{type:'text/javascript'})));
  const proto=location.protocol==='https:'?'wss':'ws';
  ws=new WebSocket(proto+'://'+location.host+'/call/ws?connectionId='+encodeURIComponent(conn)+'&phone='+phone+'&token='+encodeURIComponent(token));
  ws.binaryType='arraybuffer';
@@ -145,7 +146,7 @@ async function dial(){
   micNode=new AudioWorkletNode(ac,'mic');
   micNode.port.onmessage=e=>{if(ws&&ws.readyState===1)ws.send(e.data.buf);$('micLvl').style.width=Math.min(100,e.data.peak*140)+'%%'};
   src.connect(micNode);
-  playNode=new AudioWorkletNode(ac,'play');playNode.connect(ac.destination);
+  playNode=new AudioWorkletNode(pac,'play');playNode.connect(pac.destination);
   $('dial').style.display='none';$('hang').style.display='inline-block'};
  ws.onmessage=e=>{const i16=new Int16Array(e.data);const f=new Float32Array(i16.length);let peak=0;
   for(let k=0;k<i16.length;k++){f[k]=i16[k]/32768;if(Math.abs(f[k])>peak)peak=Math.abs(f[k])}
@@ -154,6 +155,6 @@ async function dial(){
  ws.onerror=()=>log('erro no websocket')}
 function hang(){if(ws&&ws.readyState===1)ws.send('hangup');if(ws)ws.close();cleanup()}
 function cleanup(){try{micStream&&micStream.getTracks().forEach(t=>t.stop())}catch(e){}
- try{ac&&ac.close()}catch(e){}$('dial').style.display='inline-block';$('hang').style.display='none'}
+ try{ac&&ac.close()}catch(e){}try{pac&&pac.close()}catch(e){}$('dial').style.display='inline-block';$('hang').style.display='none'}
 $('dial').onclick=dial;$('hang').onclick=hang;
 </script></body></html>`

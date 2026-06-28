@@ -23,14 +23,17 @@ type WSPipe struct {
 // (1920 bytes); pode ser nil em testes.
 func NewWSPipe(onClient func([]byte)) *WSPipe {
 	return &WSPipe{
-		in:       make(chan []float32, 50),
+		// Buffer raso (~480ms teto): sob clock-drift entre o mic do browser e o ritmo
+		// do meowcaller, manter pouca folga evita o atraso crescer ao longo da chamada.
+		in:       make(chan []float32, 8),
 		onClient: onClient,
 		closed:   make(chan struct{}),
 	}
 }
 
 // PushMic recebe um frame s16le do browser (mic), converte e enfileira pra tocar na
-// chamada. Non-blocking: descarta se cheio (não acumula latência).
+// chamada. Se o buffer estiver cheio, descarta o frame mais VELHO e coloca o novo —
+// assim a chamada fica sempre no áudio ATUAL (latência baixa) em vez de acumular atraso.
 func (p *WSPipe) PushMic(s16 []byte) {
 	f := s16leToFloat32(s16)
 	if f == nil {
@@ -39,6 +42,14 @@ func (p *WSPipe) PushMic(s16 []byte) {
 	select {
 	case p.in <- f:
 	default:
+		select {
+		case <-p.in: // descarta o mais velho
+		default:
+		}
+		select {
+		case p.in <- f:
+		default:
+		}
 	}
 }
 
