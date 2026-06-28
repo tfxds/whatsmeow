@@ -44,7 +44,14 @@ func (m *Manager) clientFor(connID string, wa *whatsmeow.Client) *meowcaller.Cli
 func (m *Manager) Start(ctx context.Context, connID string, wa *whatsmeow.Client, phone string) (string, error) {
 	m.mu.Lock()
 	mc := m.clientFor(connID, wa)
+	prev := m.active[connID]
 	m.mu.Unlock()
+
+	// Se já houver uma chamada ativa nessa conexão, encerra antes (senão a antiga fica
+	// órfã tocando o tom e o OnEnd dela apagaria a entrada da nova).
+	if prev != nil {
+		_ = prev.Hangup()
+	}
 
 	call, err := mc.Call(ctx, phone)
 	if err != nil {
@@ -65,7 +72,11 @@ func (m *Manager) Start(ctx context.Context, connID string, wa *whatsmeow.Client
 	call.OnEnd(func(reason string) {
 		m.log.Infof("call %s ENCERRADA (%s)", callID, reason)
 		m.mu.Lock()
-		delete(m.active, connID)
+		// Só apaga se ainda for ESTA chamada (OnEnd pode disparar 2x, e uma nova
+		// chamada pode ter assumido a entrada).
+		if m.active[connID] == call {
+			delete(m.active, connID)
+		}
 		m.mu.Unlock()
 	})
 
