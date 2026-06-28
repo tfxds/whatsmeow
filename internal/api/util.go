@@ -6,8 +6,58 @@ import (
 	"strings"
 	"time"
 
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/types"
 )
+
+// userAvatarRequest mirrors WuzAPI's /user/avatar body.
+type userAvatarRequest struct {
+	ConnectionID string `json:"connectionId"`
+	Phone        string `json:"Phone"`
+	Preview      bool   `json:"Preview"`
+}
+
+// handleUserAvatar retorna a URL da foto de perfil de um número/grupo (ou "" se não
+// tiver/privado). NextFlow baixa e cacheia. GetProfilePictureInfo(Preview=thumbnail).
+func (a *API) handleUserAvatar(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req userAvatarRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	if req.Phone == "" {
+		writeError(w, http.StatusBadRequest, "Phone is required")
+		return
+	}
+	if _, ok := a.authConn(w, r, req.ConnectionID); !ok {
+		return
+	}
+	sess, ok := a.Mgr.Get(req.ConnectionID)
+	if !ok {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
+	target := req.Phone
+	if !strings.Contains(target, "@") {
+		target += "@s.whatsapp.net"
+	}
+	jid, err := types.ParseJID(target)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid phone: "+err.Error())
+		return
+	}
+	info, err := sess.Client.GetProfilePictureInfo(r.Context(), jid, &whatsmeow.GetProfilePictureParams{Preview: req.Preview})
+	if err != nil || info == nil {
+		// sem foto / privacidade / erro → vazio (não é falha fatal)
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "URL": ""})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "URL": info.URL})
+}
 
 // userCheckRequest mirrors WuzAPI's /user/check body.
 type userCheckRequest struct {

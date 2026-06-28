@@ -32,6 +32,7 @@ func (a *API) Register(mux *http.ServeMux) {
 
 	// Utilities (TASK 8).
 	mux.HandleFunc("/user/check", a.handleUserCheck)   // POST {connectionId, Phone:[...]}
+	mux.HandleFunc("/user/avatar", a.handleUserAvatar) // POST {connectionId, Phone, Preview} → {URL}
 	mux.HandleFunc("/chat/markread", a.handleMarkRead) // POST {connectionId, Phone, MessageID}
 	mux.HandleFunc("/chat/presence", a.handlePresence) // POST {connectionId, Phone, State}
 	mux.HandleFunc("/chat/edit", a.handleEdit)         // POST {connectionId, Phone, MessageID, Body}

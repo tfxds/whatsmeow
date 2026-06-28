@@ -13,6 +13,9 @@ type sendTextRequest struct {
 	ConnectionID string `json:"connectionId"`
 	Phone        string `json:"Phone"`
 	Body         string `json:"Body"`
+	QuotedID     string `json:"QuotedID"`     // id da msg citada (responder)
+	QuotedFromMe bool   `json:"QuotedFromMe"` // a msg citada é minha?
+	QuotedText   string `json:"QuotedText"`   // texto da msg citada (pra renderizar o balão)
 }
 
 // handleSendText sends a plain text WhatsApp message via the named connection.
@@ -49,6 +52,23 @@ func (a *API) handleSendText(w http.ResponseWriter, r *http.Request) {
 	}
 
 	msg := &waE2E.Message{Conversation: proto.String(req.Body)}
+	// Responder/citar: ContextInfo precisa de StanzaID + Participant + a msg citada.
+	// Participant = meu JID se a citada é minha, senão o JID do contato. Usa
+	// ExtendedTextMessage porque Conversation não carrega ContextInfo.
+	if req.QuotedID != "" {
+		participant := jid
+		if req.QuotedFromMe && sess.Client.Store.ID != nil {
+			participant = sess.Client.Store.ID.ToNonAD()
+		}
+		msg = &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+			Text: proto.String(req.Body),
+			ContextInfo: &waE2E.ContextInfo{
+				StanzaID:      proto.String(req.QuotedID),
+				Participant:   proto.String(participant.String()),
+				QuotedMessage: &waE2E.Message{Conversation: proto.String(req.QuotedText)},
+			},
+		}}
+	}
 	resp, err := sess.Client.SendMessage(r.Context(), jid, msg)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
