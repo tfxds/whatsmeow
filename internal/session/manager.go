@@ -220,6 +220,13 @@ func (m *Manager) attachHandlers(sess *Session) {
 				return
 			}
 			m.dispatcher.Send(conn.WebhookURL, normalizeMessage(connID, tenantID, v))
+		case *events.Receipt:
+			// Recibo de entrega/leitura das msgs ENVIADAS → ✓✓ e azul no painel.
+			if payload := normalizeReceipt(connID, tenantID, v); payload != nil {
+				if conn := m.lookupConn(connID); conn != nil && conn.WebhookURL != "" {
+					m.dispatcher.Send(conn.WebhookURL, payload)
+				}
+			}
 		case *events.Connected:
 			m.setConnected(connID, true)
 			m.persistJID(connID)

@@ -186,6 +186,7 @@ func SendAudio(ctx context.Context, cli *whatsmeow.Client, to types.JID, url str
 	msg := &waE2E.Message{AudioMessage: &waE2E.AudioMessage{
 		Mimetype:      proto.String("audio/ogg; codecs=opus"),
 		PTT:           proto.Bool(true),
+		Seconds:       proto.Uint32(audio.DurationSeconds(ogg)), // senão WhatsApp mostra 0:00
 		URL:           proto.String(up.URL),
 		DirectPath:    proto.String(up.DirectPath),
 		MediaKey:      up.MediaKey,

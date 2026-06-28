@@ -15,6 +15,36 @@ func jidStr(j types.JID) string {
 	return j.String()
 }
 
+// normalizeReceipt converte um events.Receipt (entrega/leitura de msg ENVIADA) no
+// payload que o webhook do NextFlow espera: {type:"Receipt", Type, MessageIDs}.
+// O NextFlow casa MessageIDs com chat_messages.id e atualiza ✓✓/azul. Retorna nil
+// pros tipos que não interessam (sender/retry/etc).
+func normalizeReceipt(connID, tenantID string, r *events.Receipt) map[string]any {
+	var status string
+	switch r.Type {
+	case types.ReceiptTypeDelivered: // "" → mapeado pra "delivery" no PROVIDER_STATUS_MAP
+		status = "delivery"
+	case types.ReceiptTypeRead, types.ReceiptTypeReadSelf:
+		status = "read"
+	case types.ReceiptTypePlayed, types.ReceiptTypePlayedSelf:
+		status = "played"
+	default:
+		return nil
+	}
+	ids := make([]string, len(r.MessageIDs))
+	for i, id := range r.MessageIDs {
+		ids[i] = string(id)
+	}
+	return map[string]any{
+		"type":         "Receipt",
+		"Type":         status,
+		"connectionId": connID,
+		"tenantId":     tenantID,
+		"MessageIDs":   ids,
+		"Chat":         jidStr(r.Chat),
+	}
+}
+
 // normalizeMessage converts a whatsmeow events.Message into the WuzAPI-style
 // webhook payload that NextFlow's wuzapiRoutes.js parser expects. The parser
 // reads `body.Info` (capitalized fields) and `body.Message` (protojson-style
