@@ -45,6 +45,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	// Call (PoC): outbound áudio + hangup.
 	mux.HandleFunc("/call/start", a.handleCallStart)   // POST {connectionId, Phone}
 	mux.HandleFunc("/call/hangup", a.handleCallHangup) // POST {connectionId}
+	mux.HandleFunc("/call/ws", a.handleCallWS)             // WS áudio {connectionId,phone,token}
+	mux.HandleFunc("/call/testpage", a.handleCallTestPage) // GET HTML de teste
 }
 
 // writeJSON encodes v as a JSON response with the given status code.

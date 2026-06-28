@@ -3,14 +3,16 @@ module github.com/nextflow/whatsmeow-gateway
 go 1.25.0
 
 require (
+	github.com/coder/websocket v1.8.15
 	github.com/lib/pq v1.12.3
+	github.com/purpshell/meowcaller v0.0.0-20260626012300-0f1265d7ebee
 	go.mau.fi/whatsmeow v0.0.0-20260622185415-5f04eac6dbbb
+	google.golang.org/protobuf v1.36.11
 )
 
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/beeper/argo-go v1.1.2 // indirect
-	github.com/coder/websocket v1.8.15 // indirect
 	github.com/elliotchance/orderedmap/v3 v3.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hajimehoshi/go-mp3 v0.3.4 // indirect
@@ -24,7 +26,6 @@ require (
 	github.com/pion/randutil v0.1.0 // indirect
 	github.com/pion/sctp v1.9.4 // indirect
 	github.com/pion/transport/v4 v4.0.1 // indirect
-	github.com/purpshell/meowcaller v0.0.0-20260626012300-0f1265d7ebee // indirect
 	github.com/rs/zerolog v1.35.1 // indirect
 	github.com/vektah/gqlparser/v2 v2.5.27 // indirect
 	go.mau.fi/libsignal v0.2.2 // indirect
@@ -35,5 +36,4 @@ require (
 	golang.org/x/sync v0.21.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
-	google.golang.org/protobuf v1.36.11 // indirect
 )
