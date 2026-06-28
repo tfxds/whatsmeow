@@ -48,7 +48,10 @@ func (a *API) handleCallWS(w http.ResponseWriter, r *http.Request) {
 	pipe := call.NewWSPipe(func(s16 []byte) {
 		_ = c.Write(ctx, websocket.MessageBinary, s16)
 	})
-	mcall, _, err := a.Calls.StartWithPipe(ctx, connID, sess.Client, phone, pipe, pipe)
+	sendState := func(state string) {
+		_ = c.Write(ctx, websocket.MessageText, []byte(`{"type":"state","state":"`+state+`"}`))
+	}
+	mcall, _, err := a.Calls.StartWithPipe(ctx, connID, sess.Client, phone, pipe, pipe, sendState)
 	if err != nil {
 		_ = c.Close(websocket.StatusInternalError, "place call failed")
 		return

@@ -40,7 +40,7 @@ func (m *Manager) clientFor(connID string, wa *whatsmeow.Client) *meowcaller.Cli
 }
 
 // place coloca a chamada, registra callbacks/guards e marca como ativa. label só p/ log.
-func (m *Manager) place(ctx context.Context, connID string, wa *whatsmeow.Client, phone, label string) (*meowcaller.Call, string, error) {
+func (m *Manager) place(ctx context.Context, connID string, wa *whatsmeow.Client, phone, label string, onState func(string)) (*meowcaller.Call, string, error) {
 	m.mu.Lock()
 	mc := m.clientFor(connID, wa)
 	prev := m.active[connID]
@@ -60,12 +60,21 @@ func (m *Manager) place(ctx context.Context, connID string, wa *whatsmeow.Client
 
 	call.OnStateChange(func(p meowcaller.CallPhase) {
 		m.log.Infof("call %s fase=%v", callID, p)
+		if onState != nil && int(p) == 3 {
+			onState("ringing")
+		}
 	})
 	call.OnReady(func() {
 		m.log.Infof("call %s READY — atendida (%s)", callID, label)
+		if onState != nil {
+			onState("ready")
+		}
 	})
 	call.OnEnd(func(reason string) {
 		m.log.Infof("call %s ENCERRADA (%s)", callID, reason)
+		if onState != nil {
+			onState("ended")
+		}
 		m.mu.Lock()
 		if m.active[connID] == call {
 			delete(m.active, connID)
@@ -80,7 +89,7 @@ func (m *Manager) place(ctx context.Context, connID string, wa *whatsmeow.Client
 // Start coloca uma chamada e anexa áudio conforme o mode: "loopback" ecoa a voz do
 // cliente; qualquer outro toca o tom 440Hz + loga RMS do recebido.
 func (m *Manager) Start(ctx context.Context, connID string, wa *whatsmeow.Client, phone, mode string) (string, error) {
-	call, callID, err := m.place(ctx, connID, wa, phone, "mode="+mode)
+	call, callID, err := m.place(ctx, connID, wa, phone, "mode="+mode, nil)
 	if err != nil {
 		return "", err
 	}
@@ -110,8 +119,8 @@ func (m *Manager) Start(ctx context.Context, connID string, wa *whatsmeow.Client
 
 // StartWithPipe coloca a chamada usando AudioSource/AudioSink externos (ex: WebSocket).
 // Retorna a *Call pra o caller poder dar Hangup quando o WS fechar.
-func (m *Manager) StartWithPipe(ctx context.Context, connID string, wa *whatsmeow.Client, phone string, src meowcaller.AudioSource, sink meowcaller.AudioSink) (*meowcaller.Call, string, error) {
-	call, callID, err := m.place(ctx, connID, wa, phone, "ws")
+func (m *Manager) StartWithPipe(ctx context.Context, connID string, wa *whatsmeow.Client, phone string, src meowcaller.AudioSource, sink meowcaller.AudioSink, onState func(string)) (*meowcaller.Call, string, error) {
+	call, callID, err := m.place(ctx, connID, wa, phone, "ws", onState)
 	if err != nil {
 		return nil, "", err
 	}
