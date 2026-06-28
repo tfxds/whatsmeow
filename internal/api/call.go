@@ -9,6 +9,7 @@ import (
 type callStartRequest struct {
 	ConnectionID string `json:"connectionId"`
 	Phone        string `json:"Phone"`
+	Mode         string `json:"Mode"` // "loopback" (eco) ou vazio/"tone" (tom de teste)
 }
 
 // handleCallStart coloca uma chamada outbound de áudio (PoC) tocando o tom de teste.
@@ -35,7 +36,7 @@ func (a *API) handleCallStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
-	callID, err := a.Calls.Start(r.Context(), req.ConnectionID, sess.Client, phone)
+	callID, err := a.Calls.Start(r.Context(), req.ConnectionID, sess.Client, phone, req.Mode)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

@@ -39,9 +39,10 @@ func (m *Manager) clientFor(connID string, wa *whatsmeow.Client) *meowcaller.Cli
 	return c
 }
 
-// Start coloca uma chamada outbound de áudio pra phone (só dígitos), anexa o tom de
-// teste e um sink que loga RMS. Retorna o ID da chamada.
-func (m *Manager) Start(ctx context.Context, connID string, wa *whatsmeow.Client, phone string) (string, error) {
+// Start coloca uma chamada outbound de áudio pra phone (só dígitos) e anexa o áudio
+// conforme o mode: "loopback" ecoa a voz do cliente de volta (prova codec+latência),
+// qualquer outro valor toca o tom de teste 440Hz + loga RMS do recebido. Retorna o ID.
+func (m *Manager) Start(ctx context.Context, connID string, wa *whatsmeow.Client, phone, mode string) (string, error) {
 	m.mu.Lock()
 	mc := m.clientFor(connID, wa)
 	prev := m.active[connID]
@@ -67,7 +68,7 @@ func (m *Manager) Start(ctx context.Context, connID string, wa *whatsmeow.Client
 		m.log.Infof("call %s fase=%v", callID, p)
 	})
 	call.OnReady(func() {
-		m.log.Infof("call %s READY — atendida, tocando tom 440Hz", callID)
+		m.log.Infof("call %s READY — atendida (mode=%s)", callID, mode)
 	})
 	call.OnEnd(func(reason string) {
 		m.log.Infof("call %s ENCERRADA (%s)", callID, reason)
@@ -80,26 +81,31 @@ func (m *Manager) Start(ctx context.Context, connID string, wa *whatsmeow.Client
 		m.mu.Unlock()
 	})
 
-	// Tom de teste (uplink: gateway → peer).
-	call.Play(newToneSource(440))
+	if mode == "loopback" {
+		// Eco: o mesmo pipe é source e sink — a voz do cliente volta pra ele.
+		pipe := newLoopbackPipe()
+		call.Play(pipe)
+		call.Receive(pipe)
+	} else {
+		// Tom de teste (uplink) + sink que loga RMS do recebido (downlink) ~1x/s.
+		call.Play(newToneSource(440))
+		var frames int
+		var sumsq float64
+		call.Receive(meowcaller.SinkFunc(func(pcm []float32) {
+			for _, s := range pcm {
+				sumsq += float64(s) * float64(s)
+			}
+			frames++
+			if frames >= 17 {
+				rms := math.Sqrt(sumsq / float64(frames*meowcaller.FrameSamples))
+				m.log.Infof("call %s áudio recebido: %d frames, RMS=%.4f", callID, frames, rms)
+				frames = 0
+				sumsq = 0
+			}
+		}))
+	}
 
-	// Sink (downlink: peer → gateway) logando RMS ~1x/s (16k/960 ≈ 16.6 frames/s).
-	var frames int
-	var sumsq float64
-	call.Receive(meowcaller.SinkFunc(func(pcm []float32) {
-		for _, s := range pcm {
-			sumsq += float64(s) * float64(s)
-		}
-		frames++
-		if frames >= 17 {
-			rms := math.Sqrt(sumsq / float64(frames*meowcaller.FrameSamples))
-			m.log.Infof("call %s áudio recebido: %d frames, RMS=%.4f", callID, frames, rms)
-			frames = 0
-			sumsq = 0
-		}
-	}))
-
-	m.log.Infof("call %s INICIADA para %s (conn %s)", callID, phone, connID)
+	m.log.Infof("call %s INICIADA para %s (conn %s, mode=%s)", callID, phone, connID, mode)
 	return callID, nil
 }
 
