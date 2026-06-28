@@ -13,7 +13,10 @@ func TestWSPipeMicToReadFrame(t *testing.T) {
 		b[i*2] = 0xFF
 		b[i*2+1] = 0x3F // 0x3FFF = 16383 ~ 0.5
 	}
-	p.PushMic(b)
+	// Prima o jitter buffer (jitterTarget frames) antes de drenar.
+	for i := 0; i < jitterTarget; i++ {
+		p.PushMic(b)
+	}
 	f, err := p.ReadFrame()
 	if err != nil {
 		t.Fatalf("ReadFrame erro: %v", err)

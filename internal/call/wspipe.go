@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"io"
 	"sync"
-	"time"
 
 	"github.com/purpshell/meowcaller"
 )
@@ -17,7 +16,14 @@ type WSPipe struct {
 	onClient func([]byte)
 	closed   chan struct{}
 	once     sync.Once
+	mu       sync.Mutex
+	primed   bool // jitter buffer: só começa a drenar depois de acumular jitterTarget frames
 }
+
+// jitterTarget = quantos frames acumular antes de alimentar o meowcaller. Mantém o áudio
+// CONTÍNUO (sem inserir silêncio no meio quando o WS oscila), o que evita o WhatsApp do
+// celular crescer a própria jitter buffer. 3 frames ≈ 180ms.
+const jitterTarget = 3
 
 // NewWSPipe cria o pipe. onClient recebe cada frame da voz do cliente já em s16le
 // (1920 bytes); pode ser nil em testes.
@@ -53,14 +59,37 @@ func (p *WSPipe) PushMic(s16 []byte) {
 	}
 }
 
-// ReadFrame (AudioSource → cliente): próximo frame do mic, ou silêncio se vazio.
+// ReadFrame (AudioSource → cliente): alimenta o meowcaller com jitter buffer + prime.
+// Enquanto não acumular jitterTarget frames, devolve silêncio (priming). Depois drena
+// de forma contínua; se esvaziar (underrun), volta a primar — evita inserir silêncio
+// no meio do áudio, que faria o WhatsApp do celular bufferizar mais (atraso crescente).
 func (p *WSPipe) ReadFrame() ([]float32, error) {
+	select {
+	case <-p.closed:
+		return nil, io.EOF
+	default:
+	}
+	p.mu.Lock()
+	if !p.primed {
+		if len(p.in) >= jitterTarget {
+			p.primed = true
+		} else {
+			p.mu.Unlock()
+			return make([]float32, meowcaller.FrameSamples), nil // priming: silêncio
+		}
+	}
+	p.mu.Unlock()
+
 	select {
 	case <-p.closed:
 		return nil, io.EOF
 	case f := <-p.in:
 		return f, nil
-	case <-time.After(20 * time.Millisecond):
+	default:
+		// underrun → silêncio e re-prima (reabastece antes de drenar de novo)
+		p.mu.Lock()
+		p.primed = false
+		p.mu.Unlock()
 		return make([]float32, meowcaller.FrameSamples), nil
 	}
 }
