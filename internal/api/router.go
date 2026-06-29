@@ -46,6 +46,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/call/start", a.handleCallStart)   // POST {connectionId, Phone}
 	mux.HandleFunc("/call/hangup", a.handleCallHangup) // POST {connectionId}
 	mux.HandleFunc("/call/ws", a.handleCallWS)             // WS áudio {connectionId,phone,token}
+	mux.HandleFunc("/call/reject", a.handleCallReject)     // POST {connectionId, callId}
 	mux.HandleFunc("/call/testpage", a.handleCallTestPage) // GET HTML de teste
 }
 

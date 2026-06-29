@@ -8,6 +8,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/nextflow/whatsmeow-gateway/internal/call"
+	"github.com/purpshell/meowcaller"
 )
 
 // handleCallWS: WebSocket de áudio de uma chamada. Query: connectionId, phone, token.
@@ -18,6 +19,7 @@ func (a *API) handleCallWS(w http.ResponseWriter, r *http.Request) {
 	connID := q.Get("connectionId")
 	phone := callDigitsOnly(q.Get("phone"))
 	token := q.Get("token")
+	accept := q.Get("accept")
 
 	conn, err := a.findConn(r.Context(), connID)
 	if err != nil {
@@ -28,7 +30,7 @@ func (a *API) handleCallWS(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid token or connection")
 		return
 	}
-	if phone == "" {
+	if accept == "" && phone == "" {
 		writeError(w, http.StatusBadRequest, "phone is required")
 		return
 	}
@@ -51,9 +53,14 @@ func (a *API) handleCallWS(w http.ResponseWriter, r *http.Request) {
 	sendState := func(state string) {
 		_ = c.Write(ctx, websocket.MessageText, []byte(`{"type":"state","state":"`+state+`"}`))
 	}
-	mcall, _, err := a.Calls.StartWithPipe(ctx, connID, sess.Client, phone, pipe, pipe, sendState)
+	var mcall *meowcaller.Call
+	if accept != "" {
+		mcall, err = a.Calls.AcceptIncoming(accept, pipe, pipe, sendState)
+	} else {
+		mcall, _, err = a.Calls.StartWithPipe(ctx, connID, sess.Client, phone, pipe, pipe, sendState)
+	}
 	if err != nil {
-		_ = c.Close(websocket.StatusInternalError, "place call failed")
+		_ = c.Close(websocket.StatusInternalError, err.Error())
 		return
 	}
 	defer func() {
@@ -75,6 +82,32 @@ func (a *API) handleCallWS(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+type callRejectRequest struct {
+	ConnectionID string `json:"connectionId"`
+	CallID       string `json:"callId"`
+}
+
+// handleCallReject recusa uma chamada RECEBIDA que está tocando.
+func (a *API) handleCallReject(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req callRejectRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	if _, ok := a.authConn(w, r, req.ConnectionID); !ok {
+		return
+	}
+	if err := a.Calls.RejectIncoming(req.CallID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
 // handleCallTestPage serve um HTML standalone que capta o mic e toca o áudio recebido
