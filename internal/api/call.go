@@ -46,6 +46,7 @@ func (a *API) handleCallStart(w http.ResponseWriter, r *http.Request) {
 
 type callHangupRequest struct {
 	ConnectionID string `json:"connectionId"`
+	CallID       string `json:"callId"`
 }
 
 // handleCallHangup encerra a chamada ativa da conexão.
@@ -62,7 +63,7 @@ func (a *API) handleCallHangup(w http.ResponseWriter, r *http.Request) {
 	if _, ok := a.authConn(w, r, req.ConnectionID); !ok {
 		return
 	}
-	if err := a.Calls.Hangup(req.ConnectionID); err != nil {
+	if err := a.Calls.Hangup(req.CallID); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

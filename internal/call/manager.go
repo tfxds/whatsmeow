@@ -22,7 +22,7 @@ import (
 type Manager struct {
 	mu      sync.Mutex
 	clients map[string]*meowcaller.Client
-	active  map[string]*meowcaller.Call
+	active  map[string]*meowcaller.Call // chamadas OUTBOUND ativas, por callID (várias simultâneas no mesmo número)
 	log     waLog.Logger
 
 	pending     map[string]*inboundCall                // chamadas RECEBIDAS (já atendidas no protocolo, tocando ringback), por callID
@@ -68,19 +68,17 @@ func (m *Manager) clientFor(connID string, wa *whatsmeow.Client) *meowcaller.Cli
 func (m *Manager) place(ctx context.Context, connID string, wa *whatsmeow.Client, phone, label string, onState func(string)) (*meowcaller.Call, string, error) {
 	m.mu.Lock()
 	mc := m.clientFor(connID, wa)
-	prev := m.active[connID]
 	m.mu.Unlock()
-	if prev != nil {
-		_ = prev.Hangup()
-	}
 
 	call, err := mc.Call(ctx, phone)
 	if err != nil {
 		return nil, "", fmt.Errorf("place call: %w", err)
 	}
 	callID := call.ID()
+	// Indexa por callID (NÃO por connID): vários atendentes ligam pelo mesmo número
+	// (mesmo connID) ao mesmo tempo, cada chamada independente. Não derruba as outras.
 	m.mu.Lock()
-	m.active[connID] = call
+	m.active[callID] = call
 	m.mu.Unlock()
 
 	call.OnStateChange(func(p meowcaller.CallPhase) {
@@ -101,9 +99,7 @@ func (m *Manager) place(ctx context.Context, connID string, wa *whatsmeow.Client
 			onState("ended")
 		}
 		m.mu.Lock()
-		if m.active[connID] == call {
-			delete(m.active, connID)
-		}
+		delete(m.active, callID)
 		m.mu.Unlock()
 	})
 
@@ -154,13 +150,13 @@ func (m *Manager) StartWithPipe(ctx context.Context, connID string, wa *whatsmeo
 	return call, callID, nil
 }
 
-// Hangup encerra a chamada ativa da conexão (se houver).
-func (m *Manager) Hangup(connID string) error {
+// Hangup encerra uma chamada ativa pelo callID (cada outbound é independente).
+func (m *Manager) Hangup(callID string) error {
 	m.mu.Lock()
-	call, ok := m.active[connID]
+	call, ok := m.active[callID]
 	m.mu.Unlock()
 	if !ok {
-		return fmt.Errorf("nenhuma chamada ativa pra conexão %s", connID)
+		return fmt.Errorf("nenhuma chamada ativa %s", callID)
 	}
 	return call.Hangup()
 }
