@@ -9,6 +9,7 @@ import (
 
 	"github.com/purpshell/meowcaller"
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
@@ -21,16 +22,18 @@ type Manager struct {
 	active  map[string]*meowcaller.Call
 	log     waLog.Logger
 
-	pending    map[string]*meowcaller.Call           // chamadas RECEBIDAS seguradas, por callID
-	onIncoming func(connID, callID, fromPhone string) // dispara webhook (setado pela API/main)
+	pending     map[string]*meowcaller.Call            // chamadas RECEBIDAS seguradas, por callID
+	callerPhone map[string]string                      // callID → telefone REAL do chamador (CallCreatorAlt)
+	onIncoming  func(connID, callID, fromPhone string) // dispara webhook (setado pela API/main)
 }
 
 func NewManager() *Manager {
 	return &Manager{
-		clients: make(map[string]*meowcaller.Client),
-		active:  make(map[string]*meowcaller.Call),
-		pending: make(map[string]*meowcaller.Call),
-		log:     waLog.Stdout("Call", "INFO", true),
+		clients:     make(map[string]*meowcaller.Client),
+		active:      make(map[string]*meowcaller.Call),
+		pending:     make(map[string]*meowcaller.Call),
+		callerPhone: make(map[string]string),
+		log:         waLog.Stdout("Call", "INFO", true),
 	}
 }
 
@@ -150,17 +153,36 @@ func (m *Manager) Hangup(connID string) error {
 func (m *Manager) EnsureClient(connID string, wa *whatsmeow.Client) {
 	m.mu.Lock()
 	_, exists := m.clients[connID]
-	mc := m.clientFor(connID, wa)
 	m.mu.Unlock()
 	if exists {
 		return
 	}
+
+	// Captura o telefone REAL do chamador (CallCreatorAlt) — o meowcaller só expõe o LID
+	// via Peer(). Registrar ANTES do clientFor (handler do meowcaller) pra rodar primeiro
+	// e a chave já estar pronta quando o OnIncomingCall disparar.
+	wa.AddEventHandler(func(evt any) {
+		if co, ok := evt.(*events.CallOffer); ok && co.CallCreatorAlt.User != "" {
+			m.mu.Lock()
+			m.callerPhone[co.CallID] = co.CallCreatorAlt.User
+			m.mu.Unlock()
+		}
+	})
+
+	m.mu.Lock()
+	mc := m.clientFor(connID, wa)
+	m.mu.Unlock()
+
 	mc.OnIncomingCall(func(call *meowcaller.Call) {
 		callID := call.ID()
-		from := call.Peer().User
 		m.mu.Lock()
+		from := m.callerPhone[callID]
+		delete(m.callerPhone, callID)
 		m.pending[callID] = call
 		m.mu.Unlock()
+		if from == "" {
+			from = call.Peer().User // fallback: LID se não veio o telefone real
+		}
 		m.log.Infof("INBOUND call %s de %s (conn %s) — segurando, ring-all", callID, from, connID)
 
 		call.OnEnd(func(reason string) {
