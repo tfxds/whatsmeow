@@ -47,8 +47,8 @@ github.com/pion/transport/v4 v4.0.1 h1:sdROELU6BZ63Ab7FrOLn13M6YdJLY20wldXW2Cu2k
 github.com/pion/transport/v4 v4.0.1/go.mod h1:nEuEA4AD5lPdcIegQDpVLgNoDGreqM/YqmEx3ovP4jM=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
-github.com/purpshell/meowcaller v0.0.0-20260626012300-0f1265d7ebee h1:hZW+KsLLjUVNwJv9hrOJSBmSyjoHBO36cZJgAjoG070=
-github.com/purpshell/meowcaller v0.0.0-20260626012300-0f1265d7ebee/go.mod h1:FA3k7L98Dy2km9hvcdKJH1HMKPpi8bCONlA7R84NpN4=
+github.com/purpshell/meowcaller v0.0.0-20260624070908-656eef01a70e h1:aAuaGNY+beOjhsHH2peVegsnDde4rZ+JNgcy75Ln56Q=
+github.com/purpshell/meowcaller v0.0.0-20260624070908-656eef01a70e/go.mod h1:FA3k7L98Dy2km9hvcdKJH1HMKPpi8bCONlA7R84NpN4=
 github.com/rs/zerolog v1.35.1 h1:m7xQeoiLIiV0BCEY4Hs+j2NG4Gp2o2KPKmhnnLiazKI=
 github.com/rs/zerolog v1.35.1/go.mod h1:EjML9kdfa/RMA7h/6z6pYmq1ykOuA8/mjWaEvGI+jcw=
 github.com/sergi/go-diff v1.3.1 h1:xkr+Oxo4BOQKmkn/B9eMK0g5Kg/983T9DqqPHwYqD+8=

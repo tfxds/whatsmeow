@@ -6,6 +6,7 @@ require (
 	github.com/coder/websocket v1.8.15
 	github.com/lib/pq v1.12.3
 	github.com/purpshell/meowcaller v0.0.0-20260626012300-0f1265d7ebee
+	github.com/rs/zerolog v1.35.1
 	go.mau.fi/whatsmeow v0.0.0-20260622185415-5f04eac6dbbb
 	google.golang.org/protobuf v1.36.11
 )
@@ -26,7 +27,6 @@ require (
 	github.com/pion/randutil v0.1.0 // indirect
 	github.com/pion/sctp v1.9.4 // indirect
 	github.com/pion/transport/v4 v4.0.1 // indirect
-	github.com/rs/zerolog v1.35.1 // indirect
 	github.com/vektah/gqlparser/v2 v2.5.27 // indirect
 	go.mau.fi/libsignal v0.2.2 // indirect
 	go.mau.fi/util v0.9.10 // indirect
@@ -37,3 +37,5 @@ require (
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
 )
+
+replace github.com/purpshell/meowcaller => /root/meowcaller-fork

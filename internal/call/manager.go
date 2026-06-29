@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
 	"sync"
 	"time"
+
+	"github.com/rs/zerolog"
 
 	"github.com/purpshell/meowcaller"
 	"go.mau.fi/whatsmeow"
@@ -22,16 +25,26 @@ type Manager struct {
 	active  map[string]*meowcaller.Call
 	log     waLog.Logger
 
-	pending     map[string]*meowcaller.Call            // chamadas RECEBIDAS seguradas, por callID
+	pending     map[string]*inboundCall                // chamadas RECEBIDAS (já atendidas no protocolo, tocando ringback), por callID
 	callerPhone map[string]string                      // callID → telefone REAL do chamador (CallCreatorAlt)
 	onIncoming  func(connID, callID, fromPhone string) // dispara webhook (setado pela API/main)
+}
+
+// inboundCall guarda uma chamada recebida que já foi atendida no protocolo (Answer
+// imediato, tocando ringback pro chamador) e está esperando um atendente pegar. Quando
+// um atendente atende, onState é setado (pra avisar o navegador) e accepted vira true
+// (cancela o timeout de "ninguém atendeu").
+type inboundCall struct {
+	call     *meowcaller.Call
+	onState  func(string)
+	accepted bool
 }
 
 func NewManager() *Manager {
 	return &Manager{
 		clients:     make(map[string]*meowcaller.Client),
 		active:      make(map[string]*meowcaller.Call),
-		pending:     make(map[string]*meowcaller.Call),
+		pending:     make(map[string]*inboundCall),
 		callerPhone: make(map[string]string),
 		log:         waLog.Stdout("Call", "INFO", true),
 	}
@@ -42,7 +55,11 @@ func (m *Manager) clientFor(connID string, wa *whatsmeow.Client) *meowcaller.Cli
 	if c, ok := m.clients[connID]; ok {
 		return c
 	}
-	c := meowcaller.NewClient(wa)
+	// Logger interno do meowcaller em nível Info (default é Nop). Mostra os marcadores de
+	// mídia ("connecting media", "inbound audio flowing", etc) sem o spam de trace
+	// (per-frame "protected audio frame"/"sent relay packet").
+	mcLog := zerolog.New(os.Stdout).Level(zerolog.InfoLevel).With().Timestamp().Logger()
+	c := meowcaller.NewClient(wa, meowcaller.WithLogger(mcLog))
 	m.clients[connID] = c
 	return c
 }
@@ -178,77 +195,90 @@ func (m *Manager) EnsureClient(connID string, wa *whatsmeow.Client) {
 		m.mu.Lock()
 		from := m.callerPhone[callID]
 		delete(m.callerPhone, callID)
-		m.pending[callID] = call
+		ic := &inboundCall{call: call}
+		m.pending[callID] = ic
 		m.mu.Unlock()
 		if from == "" {
 			from = call.Peer().User // fallback: LID se não veio o telefone real
 		}
-		m.log.Infof("INBOUND call %s de %s (conn %s) — segurando, ring-all", callID, from, connID)
+		m.log.Infof("INBOUND call %s de %s (conn %s) — atendendo no protocolo (ringback) + ring-all", callID, from, connID)
 
+		// ATENDE NA HORA no protocolo: o WhatsApp exige o accept dentro de uma janela
+		// curta, senão o relay para de bridar a mídia do chamador (RX). Tocamos ringback
+		// pro chamador OUVIR "chamando" e descartamos a voz dele enquanto nenhum atendente
+		// pegou. Quando um atendente atende, AcceptIncoming troca a fonte/sink ao vivo.
 		call.OnEnd(func(reason string) {
 			m.mu.Lock()
 			delete(m.pending, callID)
+			onState := ic.onState
 			m.mu.Unlock()
 			m.log.Infof("INBOUND call %s encerrada (%s)", callID, reason)
+			if onState != nil {
+				onState("ended") // avisa o navegador (atendente já estava na linha)
+			}
 		})
+		call.Play(newRingbackSource())
+		call.Receive(meowcaller.SinkFunc(func([]float32) {})) // descarta o áudio do chamador enquanto toca o ringback
+		if err := call.Answer(); err != nil {
+			m.log.Infof("INBOUND call %s answer ERRO: %v", callID, err)
+			m.mu.Lock()
+			delete(m.pending, callID)
+			m.mu.Unlock()
+			return
+		}
 
 		if m.onIncoming != nil {
 			m.onIncoming(connID, callID, from)
 		}
+		// Timeout: ninguém atendeu em 30 s → desliga (só se ainda não foi aceita).
 		go func() {
-			time.Sleep(45 * time.Second)
+			time.Sleep(30 * time.Second)
 			m.mu.Lock()
 			c, still := m.pending[callID]
-			if still {
+			if still && !c.accepted {
 				delete(m.pending, callID)
+			} else {
+				still = false
 			}
 			m.mu.Unlock()
 			if still {
-				_ = c.Reject()
-				m.log.Infof("INBOUND call %s rejeitada por timeout", callID)
+				_ = c.call.Hangup()
+				m.log.Infof("INBOUND call %s desligada por timeout (ninguém atendeu)", callID)
 			}
 		}()
 	})
 }
 
-// AcceptIncoming atende uma chamada recebida segurada e liga o áudio.
+// AcceptIncoming liga um atendente a uma chamada recebida que JÁ está atendida no
+// protocolo (tocando ringback). Não chama Answer — só troca ao vivo a fonte/sink do
+// ringback/descarte pro áudio do navegador (mic do atendente ↔ voz do chamador). O
+// meowcaller lê a fonte/sink a cada frame, então a troca é imediata.
 func (m *Manager) AcceptIncoming(callID string, src meowcaller.AudioSource, sink meowcaller.AudioSink, onState func(string)) (*meowcaller.Call, error) {
 	m.mu.Lock()
-	call, ok := m.pending[callID]
+	ic, ok := m.pending[callID]
 	if ok {
-		delete(m.pending, callID)
+		ic.accepted = true     // cancela o timeout de "ninguém atendeu"
+		ic.onState = onState   // o OnEnd (setado no EnsureClient) avisa o navegador ao encerrar
 	}
 	m.mu.Unlock()
 	if !ok {
 		return nil, fmt.Errorf("chamada %s nao esta tocando (ja atendida/encerrada)", callID)
 	}
-	if onState != nil {
-		call.OnStateChange(func(p meowcaller.CallPhase) { m.log.Infof("call %s fase=%v", callID, p) })
-		call.OnReady(func() { onState("ready") })
-		// Avisa o navegador quando a chamada encerra (cliente desligou) — senão o modal
-		// não fecha. Substitui o OnEnd do EnsureClient (a chamada já saiu do pending).
-		call.OnEnd(func(reason string) {
-			m.log.Infof("INBOUND call %s ENCERRADA (%s)", callID, reason)
-			onState("ended")
-		})
-	}
-	// Anexa source/sink ANTES do Answer pra o media loop pegar o áudio desde o início
-	// (anexar depois do Answer fazia o inbound começar sem áudio / com atraso).
-	call.Play(src)
-	call.Receive(sink)
-	if err := call.Answer(); err != nil {
-		return nil, fmt.Errorf("answer: %w", err)
-	}
+	m.log.Infof("INBOUND call %s ACEITA por atendente — trocando ringback→navegador", callID)
+	// Troca ao vivo: para o ringback/descarte e conecta o áudio do navegador.
+	ic.call.Play(src)
+	ic.call.Receive(sink)
 	if onState != nil {
 		onState("ready")
 	}
-	return call, nil
+	return ic.call, nil
 }
 
-// RejectIncoming recusa uma chamada recebida que está tocando.
+// RejectIncoming recusa uma chamada recebida. Como ela já foi atendida no protocolo
+// (ringback tocando), recusar = desligar.
 func (m *Manager) RejectIncoming(callID string) error {
 	m.mu.Lock()
-	call, ok := m.pending[callID]
+	ic, ok := m.pending[callID]
 	if ok {
 		delete(m.pending, callID)
 	}
@@ -256,7 +286,7 @@ func (m *Manager) RejectIncoming(callID string) error {
 	if !ok {
 		return fmt.Errorf("chamada %s nao esta tocando", callID)
 	}
-	return call.Reject()
+	return ic.call.Hangup()
 }
 
 // SetOnIncoming registra o callback disparado quando chega uma chamada (dispara o webhook).
