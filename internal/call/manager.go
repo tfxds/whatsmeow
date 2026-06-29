@@ -225,12 +225,20 @@ func (m *Manager) AcceptIncoming(callID string, src meowcaller.AudioSource, sink
 	if onState != nil {
 		call.OnStateChange(func(p meowcaller.CallPhase) { m.log.Infof("call %s fase=%v", callID, p) })
 		call.OnReady(func() { onState("ready") })
+		// Avisa o navegador quando a chamada encerra (cliente desligou) — senão o modal
+		// não fecha. Substitui o OnEnd do EnsureClient (a chamada já saiu do pending).
+		call.OnEnd(func(reason string) {
+			m.log.Infof("INBOUND call %s ENCERRADA (%s)", callID, reason)
+			onState("ended")
+		})
 	}
+	// Anexa source/sink ANTES do Answer pra o media loop pegar o áudio desde o início
+	// (anexar depois do Answer fazia o inbound começar sem áudio / com atraso).
+	call.Play(src)
+	call.Receive(sink)
 	if err := call.Answer(); err != nil {
 		return nil, fmt.Errorf("answer: %w", err)
 	}
-	call.Play(src)
-	call.Receive(sink)
 	if onState != nil {
 		onState("ready")
 	}
