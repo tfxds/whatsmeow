@@ -38,4 +38,6 @@ require (
 	golang.org/x/text v0.38.0 // indirect
 )
 
+// Fork com o fix do ICE-consent do callee (inbound RX). Backup: github.com/tfxds/meowcallerr
+// Noutra máquina: git clone git@github.com:tfxds/meowcallerr.git /root/meowcaller-fork
 replace github.com/purpshell/meowcaller => /root/meowcaller-fork
