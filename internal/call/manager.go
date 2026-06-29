@@ -151,6 +151,20 @@ func (m *Manager) StartWithPipe(ctx context.Context, connID string, wa *whatsmeo
 	return call, callID, nil
 }
 
+// CallByID devolve a *Call ativa pelo callID (outbound em active, inbound em pending) —
+// pra o WS de vídeo anexar o ReceiveVideo na MESMA chamada do áudio.
+func (m *Manager) CallByID(callID string) *meowcaller.Call {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if c, ok := m.active[callID]; ok {
+		return c
+	}
+	if ic, ok := m.pending[callID]; ok {
+		return ic.call
+	}
+	return nil
+}
+
 // Hangup encerra uma chamada ativa pelo callID (cada outbound é independente).
 func (m *Manager) Hangup(callID string) error {
 	m.mu.Lock()

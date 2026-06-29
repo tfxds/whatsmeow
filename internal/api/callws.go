@@ -84,6 +84,65 @@ func (a *API) handleCallWS(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleVideoWS: WebSocket de VÍDEO de uma chamada já ativa. Query: connectionId, callId,
+// token. Anexa ReceiveVideo na call e encaminha os access units H.264 do peer (binário) pro
+// browser. NÃO encerra a chamada ao fechar (o WS de áudio é dono do ciclo) — só desanexa.
+func (a *API) handleVideoWS(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	connID := q.Get("connectionId")
+	callID := q.Get("callId")
+	token := q.Get("token")
+
+	conn, err := a.findConn(r.Context(), connID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if conn == nil || token == "" || token != conn.Token {
+		writeError(w, http.StatusUnauthorized, "invalid token or connection")
+		return
+	}
+	mcall := a.Calls.CallByID(callID)
+	if mcall == nil {
+		writeError(w, http.StatusNotFound, "call not active")
+		return
+	}
+
+	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+	if err != nil {
+		return
+	}
+	defer c.CloseNow()
+
+	ctx := context.Background()
+	fmt.Printf("[VIDEO-WS] conectado pra call %s\n", callID)
+	var vframes int
+	mcall.ReceiveVideo(meowcaller.VideoSinkFunc(func(au []byte) {
+		if vframes++; vframes%30 == 1 {
+			fmt.Printf("[VIDEO-WS] call %s: %d access units pro browser (último %d bytes)\n", callID, vframes, len(au))
+		}
+		_ = c.Write(ctx, websocket.MessageBinary, au)
+	}))
+	defer mcall.ReceiveVideo(nil) // desanexa o vídeo ao fechar (não encerra a chamada)
+
+	// Lê os access units H.264 da câmera do atendente (binário) e manda pro peer via
+	// SendVideo. Mandar o nosso vídeo é o que faz o relay bridar o vídeo do peer de volta.
+	var sent int
+	for {
+		typ, data, err := c.Read(ctx)
+		if err != nil {
+			return
+		}
+		if typ == websocket.MessageBinary && len(data) > 0 {
+			if err := mcall.SendVideo(data); err == nil {
+				if sent++; sent%30 == 1 {
+					fmt.Printf("[VIDEO-WS] call %s: %d access units da câmera -> peer\n", callID, sent)
+				}
+			}
+		}
+	}
+}
+
 type callRejectRequest struct {
 	ConnectionID string `json:"connectionId"`
 	CallID       string `json:"callId"`
