@@ -188,6 +188,51 @@ func (m *Manager) EnsureClient(connID string, wa *whatsmeow.Client) {
 
 	mc.OnIncomingCall(func(call *meowcaller.Call) {
 		callID := call.ID()
+		// PoC vídeo inbound (env-gated): atende na hora, grava o vídeo do peer e manda um
+		// clipe H.264 de teste em loop. Só pra validar a mídia de vídeo no relay. Gateado em
+		// call.IsVideo() pra NÃO sequestrar as chamadas de áudio de produção durante o teste.
+		if os.Getenv("WHATSMEOW_VIDEO_POC") == "1" && call.IsVideo() {
+			m.log.Infof("[VIDEO-POC] INBOUND %s isVideo=%v — atendendo", callID, call.IsVideo())
+			rec, err := meowcaller.AnnexBRecorder("/tmp/peer-video.h264")
+			if err != nil {
+				m.log.Infof("[VIDEO-POC] recorder erro: %v", err)
+			} else {
+				var n int
+				call.ReceiveVideo(meowcaller.VideoSinkFunc(func(au []byte) {
+					n++
+					if n%30 == 1 {
+						m.log.Infof("[VIDEO-POC] RX vídeo: %d access units (último %d bytes)", n, len(au))
+					}
+					_ = rec.WriteVideo(au)
+				}))
+			}
+			call.OnVideoState(func(s meowcaller.VideoState) { m.log.Infof("[VIDEO-POC] videoState active=%v orient=%d", s.Active, s.Orientation) })
+			call.Play(newRingbackSource())
+			call.Receive(meowcaller.SinkFunc(func([]float32) {}))
+			if err := call.Answer(); err != nil {
+				m.log.Infof("[VIDEO-POC] answer erro: %v", err)
+				return
+			}
+			go func() {
+				clip, err := os.ReadFile("/tmp/testclip.h264")
+				if err != nil {
+					m.log.Infof("[VIDEO-POC] sem /tmp/testclip.h264: %v", err)
+					return
+				}
+				aus := splitAnnexB(clip)
+				m.log.Infof("[VIDEO-POC] clipe: %d access units", len(aus))
+				time.Sleep(2 * time.Second)
+				for i := 0; ; i++ {
+					au := aus[i%len(aus)]
+					if err := call.SendVideo(au); err != nil {
+						m.log.Infof("[VIDEO-POC] SendVideo parou: %v", err)
+						return
+					}
+					time.Sleep(66 * time.Millisecond)
+				}
+			}()
+			return
+		}
 		m.mu.Lock()
 		from := m.callerPhone[callID]
 		delete(m.callerPhone, callID)
@@ -287,3 +332,22 @@ func (m *Manager) RejectIncoming(callID string) error {
 
 // SetOnIncoming registra o callback disparado quando chega uma chamada (dispara o webhook).
 func (m *Manager) SetOnIncoming(fn func(connID, callID, fromPhone string)) { m.onIncoming = fn }
+
+// splitAnnexB quebra um stream H.264 Annex-B em access units pelo start code 00 00 00 01.
+func splitAnnexB(b []byte) [][]byte {
+	var out [][]byte
+	start := -1
+	for i := 0; i+3 < len(b); i++ {
+		if b[i] == 0 && b[i+1] == 0 && b[i+2] == 0 && b[i+3] == 1 {
+			if start >= 0 {
+				out = append(out, b[start:i])
+			}
+			start = i
+			i += 3
+		}
+	}
+	if start >= 0 && start < len(b) {
+		out = append(out, b[start:])
+	}
+	return out
+}
