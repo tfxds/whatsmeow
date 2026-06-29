@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"sync"
+	"time"
 
 	"github.com/purpshell/meowcaller"
 	"go.mau.fi/whatsmeow"
@@ -19,12 +20,16 @@ type Manager struct {
 	clients map[string]*meowcaller.Client
 	active  map[string]*meowcaller.Call
 	log     waLog.Logger
+
+	pending    map[string]*meowcaller.Call           // chamadas RECEBIDAS seguradas, por callID
+	onIncoming func(connID, callID, fromPhone string) // dispara webhook (setado pela API/main)
 }
 
 func NewManager() *Manager {
 	return &Manager{
 		clients: make(map[string]*meowcaller.Client),
 		active:  make(map[string]*meowcaller.Call),
+		pending: make(map[string]*meowcaller.Call),
 		log:     waLog.Stdout("Call", "INFO", true),
 	}
 }
@@ -139,3 +144,90 @@ func (m *Manager) Hangup(connID string) error {
 	}
 	return call.Hangup()
 }
+
+// EnsureClient cria (se preciso) o cliente meowcaller da conexão e registra o handler de
+// chamada RECEBIDA. Chamado quando a sessão CONECTA (não lazy) pra capturar inbound.
+func (m *Manager) EnsureClient(connID string, wa *whatsmeow.Client) {
+	m.mu.Lock()
+	_, exists := m.clients[connID]
+	mc := m.clientFor(connID, wa)
+	m.mu.Unlock()
+	if exists {
+		return
+	}
+	mc.OnIncomingCall(func(call *meowcaller.Call) {
+		callID := call.ID()
+		from := call.Peer().User
+		m.mu.Lock()
+		m.pending[callID] = call
+		m.mu.Unlock()
+		m.log.Infof("INBOUND call %s de %s (conn %s) — segurando, ring-all", callID, from, connID)
+
+		call.OnEnd(func(reason string) {
+			m.mu.Lock()
+			delete(m.pending, callID)
+			m.mu.Unlock()
+			m.log.Infof("INBOUND call %s encerrada (%s)", callID, reason)
+		})
+
+		if m.onIncoming != nil {
+			m.onIncoming(connID, callID, from)
+		}
+		go func() {
+			time.Sleep(45 * time.Second)
+			m.mu.Lock()
+			c, still := m.pending[callID]
+			if still {
+				delete(m.pending, callID)
+			}
+			m.mu.Unlock()
+			if still {
+				_ = c.Reject()
+				m.log.Infof("INBOUND call %s rejeitada por timeout", callID)
+			}
+		}()
+	})
+}
+
+// AcceptIncoming atende uma chamada recebida segurada e liga o áudio.
+func (m *Manager) AcceptIncoming(callID string, src meowcaller.AudioSource, sink meowcaller.AudioSink, onState func(string)) (*meowcaller.Call, error) {
+	m.mu.Lock()
+	call, ok := m.pending[callID]
+	if ok {
+		delete(m.pending, callID)
+	}
+	m.mu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("chamada %s nao esta tocando (ja atendida/encerrada)", callID)
+	}
+	if onState != nil {
+		call.OnStateChange(func(p meowcaller.CallPhase) { m.log.Infof("call %s fase=%v", callID, p) })
+		call.OnReady(func() { onState("ready") })
+	}
+	if err := call.Answer(); err != nil {
+		return nil, fmt.Errorf("answer: %w", err)
+	}
+	call.Play(src)
+	call.Receive(sink)
+	if onState != nil {
+		onState("ready")
+	}
+	return call, nil
+}
+
+// RejectIncoming recusa uma chamada recebida que está tocando.
+func (m *Manager) RejectIncoming(callID string) error {
+	m.mu.Lock()
+	call, ok := m.pending[callID]
+	if ok {
+		delete(m.pending, callID)
+	}
+	m.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("chamada %s nao esta tocando", callID)
+	}
+	return call.Reject()
+}
+
+// SetOnIncoming registra o callback disparado quando chega uma chamada (dispara o webhook).
+func (m *Manager) SetOnIncoming(fn func(connID, callID, fromPhone string)) { m.onIncoming = fn }
