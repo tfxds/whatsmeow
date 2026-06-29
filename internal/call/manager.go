@@ -27,7 +27,8 @@ type Manager struct {
 
 	pending     map[string]*inboundCall                // chamadas RECEBIDAS (já atendidas no protocolo, tocando ringback), por callID
 	callerPhone map[string]string                      // callID → telefone REAL do chamador (CallCreatorAlt)
-	onIncoming  func(connID, callID, fromPhone string) // dispara webhook (setado pela API/main)
+	onIncoming  func(connID, callID, fromPhone string) // dispara webhook IncomingCall (setado pela API/main)
+	onCallEnded func(connID, callID string)            // dispara webhook CallEnded (para a UI de tocar)
 }
 
 // inboundCall guarda uma chamada recebida que já foi atendida no protocolo (Answer
@@ -257,6 +258,11 @@ func (m *Manager) EnsureClient(connID string, wa *whatsmeow.Client) {
 			if onState != nil {
 				onState("ended") // avisa o navegador (atendente já estava na linha)
 			}
+			// Avisa o NextFlow que a chamada acabou — pra parar de tocar na UI quando o
+			// chamador cancela durante o ring (ninguém tinha atendido, onState é nil).
+			if m.onCallEnded != nil {
+				m.onCallEnded(connID, callID)
+			}
 		})
 		call.Play(newRingbackSource())
 		call.Receive(meowcaller.SinkFunc(func([]float32) {})) // descarta o áudio do chamador enquanto toca o ringback
@@ -332,6 +338,10 @@ func (m *Manager) RejectIncoming(callID string) error {
 
 // SetOnIncoming registra o callback disparado quando chega uma chamada (dispara o webhook).
 func (m *Manager) SetOnIncoming(fn func(connID, callID, fromPhone string)) { m.onIncoming = fn }
+
+// SetOnCallEnded registra o callback disparado quando uma chamada recebida encerra
+// (chamador cancelou / desligou) — pra parar de tocar na UI.
+func (m *Manager) SetOnCallEnded(fn func(connID, callID string)) { m.onCallEnded = fn }
 
 // splitAnnexB quebra um stream H.264 Annex-B em access units pelo start code 00 00 00 01.
 func splitAnnexB(b []byte) [][]byte {

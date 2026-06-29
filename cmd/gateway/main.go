@@ -39,6 +39,19 @@ func main() {
 		})
 	})
 
+	// Chamada recebida encerrou (chamador cancelou/desligou) — avisa o NextFlow pra parar
+	// de tocar na UI.
+	calls.SetOnCallEnded(func(connID, callID string) {
+		conn := mgr.LookupConn(connID)
+		if conn == nil || conn.WebhookURL == "" {
+			return
+		}
+		disp.Send(conn.WebhookURL, map[string]any{
+			"type": "CallEnded", "connectionId": connID, "tenantId": conn.TenantID,
+			"callId": callID,
+		})
+	})
+
 	// Reconnect previously-paired sessions on boot (non-fatal on failure).
 	if err := mgr.RestoreAll(context.Background()); err != nil {
 		log.Printf("restore sessions: %v", err)
