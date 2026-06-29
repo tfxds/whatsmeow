@@ -32,7 +32,16 @@ type Manager struct {
 	store      *store.Store
 	dispatcher *webhook.Dispatcher
 	log        waLog.Logger
+
+	onConnected func(connID string, wa *whatsmeow.Client)
 }
+
+// SetOnConnected registra um hook chamado após cada sessão PAREADA conectar com
+// sucesso (no Connect e no RestoreAll). Usado pra registrar o handler de chamadas.
+func (m *Manager) SetOnConnected(fn func(connID string, wa *whatsmeow.Client)) { m.onConnected = fn }
+
+// LookupConn expõe a busca da conexão armazenada (webhook URL, tenant, token).
+func (m *Manager) LookupConn(connectionID string) *store.Conn { return m.lookupConn(connectionID) }
 
 // NewManager builds a Manager backed by the given store and webhook dispatcher.
 func NewManager(st *store.Store, d *webhook.Dispatcher) *Manager {
@@ -98,6 +107,9 @@ func (m *Manager) Connect(ctx context.Context, connectionID, tenantID string) (*
 			return nil, fmt.Errorf("connect: %w", err)
 		}
 		m.setConnected(connectionID, true)
+		if m.onConnected != nil {
+			m.onConnected(connectionID, cli)
+		}
 	}
 
 	return sess, nil
@@ -318,6 +330,9 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 			continue
 		}
 		m.setConnected(conn.ConnectionID, true)
+		if m.onConnected != nil {
+			m.onConnected(conn.ConnectionID, cli)
+		}
 		restored++
 		m.log.Infof("restored connection %s (JID %s)", conn.ConnectionID, conn.JID)
 	}
