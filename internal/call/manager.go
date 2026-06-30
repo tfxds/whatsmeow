@@ -278,16 +278,9 @@ func (m *Manager) EnsureClient(connID string, wa *whatsmeow.Client) {
 				m.onCallEnded(connID, callID)
 			}
 		})
-		call.Play(newRingbackSource())
-		call.Receive(meowcaller.SinkFunc(func([]float32) {})) // descarta o áudio do chamador enquanto toca o ringback
-		if err := call.Answer(); err != nil {
-			m.log.Infof("INBOUND call %s answer ERRO: %v", callID, err)
-			m.mu.Lock()
-			delete(m.pending, callID)
-			m.mu.Unlock()
-			return
-		}
-
+		// NÃO atende no protocolo aqui: o celular do chamador deve TOCAR (toque nativo) até
+		// um atendente pegar no sistema. O Answer() (preaccept + mídia) vai no AcceptIncoming
+		// (pickup real). Só registramos a pending e avisamos a UI pra tocar.
 		if m.onIncoming != nil {
 			m.onIncoming(connID, callID, from)
 		}
@@ -325,10 +318,19 @@ func (m *Manager) AcceptIncoming(callID string, src meowcaller.AudioSource, sink
 	if !ok {
 		return nil, fmt.Errorf("chamada %s nao esta tocando (ja atendida/encerrada)", callID)
 	}
-	m.log.Infof("INBOUND call %s ACEITA por atendente — trocando ringback→navegador", callID)
-	// Troca ao vivo: para o ringback/descarte e conecta o áudio do navegador.
+	m.log.Infof("INBOUND call %s ACEITA por atendente — preaccept+mídia AGORA (pickup real)", callID)
+	// Conecta o áudio do navegador ANTES de subir a mídia (o loop lê fonte/sink a cada frame).
 	ic.call.Play(src)
 	ic.call.Receive(sink)
+	// Pickup real: AGORA sim atende no protocolo — Answer() manda o <preaccept> e sobe a mídia
+	// (antes a chamada só tocava). Aí o celular do chamador para de tocar (atendido de verdade).
+	if err := ic.call.Answer(); err != nil {
+		m.log.Warnf("INBOUND call %s Answer (pickup): %v", callID, err)
+	}
+	// Destrava o <accept> (dispara quando o mute_v2 chegar, logo após o preaccept).
+	if err := ic.call.CommitAccept(); err != nil {
+		m.log.Warnf("INBOUND call %s CommitAccept: %v", callID, err)
+	}
 	if onState != nil {
 		onState("ready")
 	}
