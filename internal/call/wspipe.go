@@ -22,8 +22,10 @@ type WSPipe struct {
 
 // jitterTarget = quantos frames acumular antes de alimentar o meowcaller. Mantém o áudio
 // CONTÍNUO (sem inserir silêncio no meio quando o WS oscila), o que evita o WhatsApp do
-// celular crescer a própria jitter buffer. 3 frames ≈ 180ms.
-const jitterTarget = 3
+// celular crescer a própria jitter buffer. Cada frame ≈ 60ms.
+// 2026-06-30: baixado de 3 (180ms) → 2 (120ms) pra reduzir a latência atendente→cliente
+// (o atraso que incomodava). Se underrun/cortes voltarem, subir; se ainda atrasado, 1 (60ms).
+const jitterTarget = 2
 
 // NewWSPipe cria o pipe. onClient recebe cada frame da voz do cliente já em s16le
 // (1920 bytes); pode ser nil em testes.
