@@ -278,9 +278,20 @@ func (m *Manager) EnsureClient(connID string, wa *whatsmeow.Client) {
 				m.onCallEnded(connID, callID)
 			}
 		})
-		// NÃO atende no protocolo aqui: o celular do chamador deve TOCAR (toque nativo) até
-		// um atendente pegar no sistema. O Answer() (preaccept + mídia) vai no AcceptIncoming
-		// (pickup real). Só registramos a pending e avisamos a UI pra tocar.
+		// PREACCEPT + MÍDIA EAGER (estilo WaCalls): a mídia/relay tem que subir CEDO senão o
+		// relay não brida a voz do chamador (RX) — confirmado: deferir pro pickup dava ZERO
+		// pacote do peer. O <accept> continua deferido pro pickup (CommitAccept), então o
+		// celular do chamador só "atende de verdade" quando o atendente pega. Tocamos ringback
+		// e descartamos a voz do chamador até o pickup (AcceptIncoming troca o sink ao vivo).
+		call.Play(newRingbackSource())
+		call.Receive(meowcaller.SinkFunc(func([]float32) {}))
+		if err := call.Answer(); err != nil {
+			m.log.Infof("INBOUND call %s answer ERRO: %v", callID, err)
+			m.mu.Lock()
+			delete(m.pending, callID)
+			m.mu.Unlock()
+			return
+		}
 		if m.onIncoming != nil {
 			m.onIncoming(connID, callID, from)
 		}
@@ -318,16 +329,13 @@ func (m *Manager) AcceptIncoming(callID string, src meowcaller.AudioSource, sink
 	if !ok {
 		return nil, fmt.Errorf("chamada %s nao esta tocando (ja atendida/encerrada)", callID)
 	}
-	m.log.Infof("INBOUND call %s ACEITA por atendente — preaccept+mídia AGORA (pickup real)", callID)
-	// Conecta o áudio do navegador ANTES de subir a mídia (o loop lê fonte/sink a cada frame).
+	m.log.Infof("INBOUND call %s ACEITA por atendente — troca ringback→navegador + <accept>", callID)
+	// A mídia já subiu eager no OnIncomingCall (relay bridando desde o ring). Aqui só trocamos o
+	// ringback/descarte pelo áudio do navegador (o loop lê fonte/sink a cada frame).
 	ic.call.Play(src)
 	ic.call.Receive(sink)
-	// Pickup real: AGORA sim atende no protocolo — Answer() manda o <preaccept> e sobe a mídia
-	// (antes a chamada só tocava). Aí o celular do chamador para de tocar (atendido de verdade).
-	if err := ic.call.Answer(); err != nil {
-		m.log.Warnf("INBOUND call %s Answer (pickup): %v", callID, err)
-	}
-	// Destrava o <accept> (dispara quando o mute_v2 chegar, logo após o preaccept).
+	// Pickup real: destrava o <accept> (dispara quando o mute_v2 chegar). Só AGORA o celular do
+	// chamador para de tocar — o preaccept eager NÃO atende, só o <accept> atende de verdade.
 	if err := ic.call.CommitAccept(); err != nil {
 		m.log.Warnf("INBOUND call %s CommitAccept: %v", callID, err)
 	}
