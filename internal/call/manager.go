@@ -27,7 +27,7 @@ type Manager struct {
 
 	pending     map[string]*inboundCall                // chamadas RECEBIDAS (já atendidas no protocolo, tocando ringback), por callID
 	callerPhone map[string]string                      // callID → telefone REAL do chamador (CallCreatorAlt)
-	onIncoming  func(connID, callID, fromPhone string) // dispara webhook IncomingCall (setado pela API/main)
+	onIncoming  func(connID, callID, fromPhone string, isVideo bool) // dispara webhook IncomingCall (setado pela API/main)
 	onCallEnded func(connID, callID string)            // dispara webhook CallEnded (para a UI de tocar)
 }
 
@@ -293,7 +293,7 @@ func (m *Manager) EnsureClient(connID string, wa *whatsmeow.Client) {
 			return
 		}
 		if m.onIncoming != nil {
-			m.onIncoming(connID, callID, from)
+			m.onIncoming(connID, callID, from, call.IsVideo())
 		}
 		// Timeout: ninguém atendeu em 30 s → desliga (só se ainda não foi aceita).
 		go func() {
@@ -361,7 +361,7 @@ func (m *Manager) RejectIncoming(callID string) error {
 }
 
 // SetOnIncoming registra o callback disparado quando chega uma chamada (dispara o webhook).
-func (m *Manager) SetOnIncoming(fn func(connID, callID, fromPhone string)) { m.onIncoming = fn }
+func (m *Manager) SetOnIncoming(fn func(connID, callID, fromPhone string, isVideo bool)) { m.onIncoming = fn }
 
 // SetOnCallEnded registra o callback disparado quando uma chamada recebida encerra
 // (chamador cancelou / desligou) — pra parar de tocar na UI.

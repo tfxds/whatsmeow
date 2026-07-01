@@ -28,14 +28,14 @@ func main() {
 	// Registra o cliente de chamadas em cada sessão conectada e dispara o webhook
 	// IncomingCall — wirado ANTES do RestoreAll pra cobrir sessões restauradas.
 	mgr.SetOnConnected(calls.EnsureClient)
-	calls.SetOnIncoming(func(connID, callID, from string) {
+	calls.SetOnIncoming(func(connID, callID, from string, isVideo bool) {
 		conn := mgr.LookupConn(connID)
 		if conn == nil || conn.WebhookURL == "" {
 			return
 		}
 		disp.Send(conn.WebhookURL, map[string]any{
 			"type": "IncomingCall", "connectionId": connID, "tenantId": conn.TenantID,
-			"callId": callID, "from": from,
+			"callId": callID, "from": from, "isVideo": isVideo,
 		})
 	})
 

@@ -31,9 +31,11 @@ const jitterTarget = 2
 // (1920 bytes); pode ser nil em testes.
 func NewWSPipe(onClient func([]byte)) *WSPipe {
 	return &WSPipe{
-		// Buffer raso (~480ms teto): sob clock-drift entre o mic do browser e o ritmo
-		// do meowcaller, manter pouca folga evita o atraso crescer ao longo da chamada.
-		in:       make(chan []float32, 8),
+		// Buffer raso (240ms teto): sob clock-drift entre o mic do browser (48k) e o ritmo do
+		// meowcaller (16k), o buffer SENTA no teto (drop-oldest) e vira latência fixa. Antes era
+		// 8 (480ms) → o atraso atendente→cliente. Baixado pra 4 (240ms) — corta o acúmulo pela
+		// metade. Se voltar underrun/corte, subir; o prime (jitterTarget) já dá a folga base.
+		in:       make(chan []float32, 4),
 		onClient: onClient,
 		closed:   make(chan struct{}),
 	}
