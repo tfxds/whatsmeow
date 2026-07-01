@@ -53,6 +53,98 @@ func NewManager(st *store.Store, d *webhook.Dispatcher) *Manager {
 	}
 }
 
+// DeviceInfo descreve um device whatsmeow pareado, pro painel de instâncias (listar/remover).
+type DeviceInfo struct {
+	JID            string `json:"jid"`
+	PushName       string `json:"pushName"`
+	RegistrationID uint32 `json:"registrationId"`
+	ConnectionID   string `json:"connectionId"`
+	TenantID       string `json:"tenantId"`
+	Connected      bool   `json:"connected"`
+}
+
+// ListDevices lista TODOS os devices pareados no store, enriquecidos com a conexão/tenant
+// dona (pela tabela connections) e se há sessão viva conectada agora.
+func (m *Manager) ListDevices(ctx context.Context) ([]DeviceInfo, error) {
+	devs, err := m.store.Container.GetAllDevices(ctx)
+	if err != nil {
+		return nil, err
+	}
+	conns, _ := m.store.ListConns(ctx)
+	connByJID := map[string]store.Conn{}
+	for _, c := range conns {
+		if c.JID != "" {
+			connByJID[c.JID] = c
+		}
+	}
+	m.mu.RLock()
+	liveJID := map[string]bool{}
+	for _, s := range m.sessions {
+		if s.Client != nil && s.Client.Store != nil && s.Client.Store.ID != nil {
+			liveJID[s.Client.Store.ID.String()] = s.Client.IsConnected()
+		}
+	}
+	m.mu.RUnlock()
+
+	out := make([]DeviceInfo, 0, len(devs))
+	for _, d := range devs {
+		jid := ""
+		if d.ID != nil {
+			jid = d.ID.String()
+		}
+		di := DeviceInfo{JID: jid, PushName: d.PushName, RegistrationID: d.RegistrationID}
+		if c, ok := connByJID[jid]; ok {
+			di.ConnectionID = c.ConnectionID
+			di.TenantID = c.TenantID
+		}
+		di.Connected = liveJID[jid]
+		out = append(out, di)
+	}
+	return out, nil
+}
+
+// RemoveByJID desloga (se houver sessão viva → unpair + disconnect) e apaga o device do store,
+// além de limpar a linha em connections. Mata o "fantasma" de vez.
+func (m *Manager) RemoveByJID(ctx context.Context, jid string) error {
+	m.mu.Lock()
+	var live *Session
+	var liveKey string
+	for k, s := range m.sessions {
+		if s.Client != nil && s.Client.Store != nil && s.Client.Store.ID != nil && s.Client.Store.ID.String() == jid {
+			live = s
+			liveKey = k
+			break
+		}
+	}
+	m.mu.Unlock()
+
+	if live != nil {
+		if err := live.Client.Logout(ctx); err != nil {
+			m.log.Warnf("logout %s: %v", jid, err)
+		}
+		live.Client.Disconnect()
+		m.mu.Lock()
+		delete(m.sessions, liveKey)
+		m.mu.Unlock()
+	} else {
+		parsed, err := types.ParseJID(jid)
+		if err != nil {
+			return fmt.Errorf("parse jid: %w", err)
+		}
+		dev, err := m.store.Container.GetDevice(ctx, parsed)
+		if err != nil {
+			return fmt.Errorf("get device: %w", err)
+		}
+		if dev != nil {
+			if err := m.store.Container.DeleteDevice(ctx, dev); err != nil {
+				return fmt.Errorf("delete device: %w", err)
+			}
+		}
+	}
+	_ = m.store.DeleteConnByJID(ctx, jid)
+	return nil
+}
+
 // Connect returns the existing session for connectionID or creates and connects
 // a new one. If the device is not yet paired it starts the QR flow.
 func (m *Manager) Connect(ctx context.Context, connectionID, tenantID string) (*Session, error) {

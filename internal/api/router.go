@@ -12,9 +12,10 @@ import (
 
 // API holds the dependencies shared by all HTTP handlers.
 type API struct {
-	Mgr   *session.Manager
-	Store *store.Store
-	Calls *call.Manager
+	Mgr        *session.Manager
+	Store      *store.Store
+	Calls      *call.Manager
+	AdminToken string
 }
 
 // Register wires the REST endpoints onto the given mux.
@@ -49,6 +50,9 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/call/video-ws", a.handleVideoWS)      // WS vídeo {connectionId,callId,token}
 	mux.HandleFunc("/call/reject", a.handleCallReject)     // POST {connectionId, callId}
 	mux.HandleFunc("/call/testpage", a.handleCallTestPage) // GET HTML de teste
+
+	// Admin (painel de instâncias): listar/remover devices pareados. Gated por GW_ADMIN_TOKEN.
+	mux.HandleFunc("/admin/sessions", a.handleAdminSessions) // GET lista | DELETE ?jid= remove
 }
 
 // writeJSON encodes v as a JSON response with the given status code.

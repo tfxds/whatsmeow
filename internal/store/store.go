@@ -73,6 +73,15 @@ ON CONFLICT (connection_id) DO UPDATE SET
 	return nil
 }
 
+// DeleteConnByJID removes connection rows matching a whatsmeow JID — cleanup ao remover um
+// device pelo painel (o fantasma pode ter mais de uma linha órfã com o mesmo jid).
+func (s *Store) DeleteConnByJID(ctx context.Context, jid string) error {
+	if _, err := s.DB.ExecContext(ctx, `DELETE FROM connections WHERE jid = $1`, jid); err != nil {
+		return fmt.Errorf("delete conn by jid: %w", err)
+	}
+	return nil
+}
+
 // ListConns returns all stored connections.
 func (s *Store) ListConns(ctx context.Context) ([]Conn, error) {
 	const q = `SELECT connection_id, tenant_id, jid, webhook_url, token FROM connections ORDER BY created_at`

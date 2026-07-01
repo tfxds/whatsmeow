@@ -64,7 +64,7 @@ func main() {
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})
 
-	restAPI := &api.API{Mgr: mgr, Store: st, Calls: calls}
+	restAPI := &api.API{Mgr: mgr, Store: st, Calls: calls, AdminToken: cfg.AdminToken}
 	restAPI.Register(mux)
 
 	addr := ":" + cfg.Port
