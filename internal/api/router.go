@@ -53,6 +53,11 @@ func (a *API) Register(mux *http.ServeMux) {
 
 	// Admin (painel de instâncias): listar/remover devices pareados. Gated por GW_ADMIN_TOKEN.
 	mux.HandleFunc("/admin/sessions", a.handleAdminSessions) // GET lista | DELETE ?jid= remove
+
+	// Sync/manutenção (equivalente aos botões dos outros providers)
+	mux.HandleFunc("/session/restart", a.handleRestart)   // POST {connectionId} — reconecta
+	mux.HandleFunc("/contacts/list", a.handleContacts)    // POST {connectionId} — lista contatos
+	mux.HandleFunc("/groups/list", a.handleGroups)        // POST {connectionId} — lista grupos
 }
 
 // writeJSON encodes v as a JSON response with the given status code.
