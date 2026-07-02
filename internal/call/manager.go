@@ -20,9 +20,10 @@ import (
 // meowcaller.NewClient instala handlers no *whatsmeow.Client, então é criado UMA vez
 // por conexão e cacheado.
 type Manager struct {
-	mu      sync.Mutex
-	clients map[string]*meowcaller.Client
-	active  map[string]*meowcaller.Call // chamadas OUTBOUND ativas, por callID (várias simultâneas no mesmo número)
+	mu       sync.Mutex
+	clients  map[string]*meowcaller.Client
+	clientWa map[string]*whatsmeow.Client // qual *whatsmeow.Client cada connID registrou — pra re-registrar handlers quando o wa TROCA (repareamento/reconexão)
+	active   map[string]*meowcaller.Call  // chamadas OUTBOUND ativas, por callID (várias simultâneas no mesmo número)
 	log     waLog.Logger
 
 	pending     map[string]*inboundCall                // chamadas RECEBIDAS (já atendidas no protocolo, tocando ringback), por callID
@@ -44,6 +45,7 @@ type inboundCall struct {
 func NewManager() *Manager {
 	return &Manager{
 		clients:     make(map[string]*meowcaller.Client),
+		clientWa:    make(map[string]*whatsmeow.Client),
 		active:      make(map[string]*meowcaller.Call),
 		pending:     make(map[string]*inboundCall),
 		callerPhone: make(map[string]string),
@@ -53,15 +55,18 @@ func NewManager() *Manager {
 
 // clientFor devolve (criando e cacheando) o cliente meowcaller pra essa conexão.
 func (m *Manager) clientFor(connID string, wa *whatsmeow.Client) *meowcaller.Client {
-	if c, ok := m.clients[connID]; ok {
-		return c
+	if c, ok := m.clients[connID]; ok && m.clientWa[connID] == wa {
+		return c // mesmo wa → reusa o meowcaller cacheado
 	}
+	// wa novo (repareamento/reconexão) → cria um meowcaller NOVO ligado a ESTE wa (o antigo
+	// ficou preso ao wa desconectado, e seus handlers não pegam os offers do cliente novo).
 	// Logger interno do meowcaller em nível Info (default é Nop). Mostra os marcadores de
 	// mídia ("connecting media", "inbound audio flowing", etc) sem o spam de trace
 	// (per-frame "protected audio frame"/"sent relay packet").
 	mcLog := zerolog.New(os.Stdout).Level(zerolog.InfoLevel).With().Timestamp().Logger()
 	c := meowcaller.NewClient(wa, meowcaller.WithLogger(mcLog))
 	m.clients[connID] = c
+	m.clientWa[connID] = wa
 	return c
 }
 
@@ -179,10 +184,14 @@ func (m *Manager) Hangup(callID string) error {
 // EnsureClient cria (se preciso) o cliente meowcaller da conexão e registra o handler de
 // chamada RECEBIDA. Chamado quando a sessão CONECTA (não lazy) pra capturar inbound.
 func (m *Manager) EnsureClient(connID string, wa *whatsmeow.Client) {
+	// Só pula se ESTE MESMO wa já foi registrado. Ao repareaar/reconectar, o wa é um cliente
+	// NOVO — precisa re-registrar o event handler + OnIncomingCall nele (senão a chamada
+	// recebida decripta mas nunca dispara o "atendendo/ring" → não toca). Antes checava só o
+	// connID e pulava, exigindo restart do serviço a cada repareamento.
 	m.mu.Lock()
-	_, exists := m.clients[connID]
+	sameWa := m.clientWa[connID] == wa
 	m.mu.Unlock()
-	if exists {
+	if sameWa {
 		return
 	}
 
