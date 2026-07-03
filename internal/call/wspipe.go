@@ -3,6 +3,8 @@ package call
 import (
 	"encoding/binary"
 	"io"
+	"os"
+	"strconv"
 	"sync"
 
 	"github.com/purpshell/meowcaller"
@@ -17,27 +19,35 @@ type WSPipe struct {
 	closed   chan struct{}
 	once     sync.Once
 	mu       sync.Mutex
-	primed   bool // jitter buffer: só começa a drenar depois de acumular jitterTarget frames
+	primed   bool // jitter buffer: só começa a drenar depois de acumular p.jitter frames
+	jitter   int  // frames a acumular antes de drenar (env WSPIPE_JITTER; default 2). Cada ≈60ms
 }
 
-// jitterTarget = quantos frames acumular antes de alimentar o meowcaller. Mantém o áudio
-// CONTÍNUO (sem inserir silêncio no meio quando o WS oscila), o que evita o WhatsApp do
-// celular crescer a própria jitter buffer. Cada frame ≈ 60ms.
-// 2026-06-30: baixado de 3 (180ms) → 2 (120ms) pra reduzir a latência atendente→cliente
-// (o atraso que incomodava). Se underrun/cortes voltarem, subir; se ainda atrasado, 1 (60ms).
-const jitterTarget = 2
+// Defaults do jitter buffer (browser do NextFlow, produção 225). Tunáveis por env — no NexCall
+// (AudioSocket) dá pra baixar WSPIPE_JITTER/WSPIPE_BUFFER pra reduzir a latência atendente→cliente.
+// Manter o áudio CONTÍNUO (sem silêncio no meio) evita o WhatsApp do celular crescer a jitter buffer.
+const (
+	jitterDefault = 2 // 120ms de folga
+	bufferDefault = 4 // teto ~240ms (drop-oldest)
+)
+
+func wspipeEnvInt(name string, def, min int) int {
+	if v := os.Getenv(name); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= min {
+			return n
+		}
+	}
+	return def
+}
 
 // NewWSPipe cria o pipe. onClient recebe cada frame da voz do cliente já em s16le
 // (1920 bytes); pode ser nil em testes.
 func NewWSPipe(onClient func([]byte)) *WSPipe {
 	return &WSPipe{
-		// Buffer raso (240ms teto): sob clock-drift entre o mic do browser (48k) e o ritmo do
-		// meowcaller (16k), o buffer SENTA no teto (drop-oldest) e vira latência fixa. Antes era
-		// 8 (480ms) → o atraso atendente→cliente. Baixado pra 4 (240ms) — corta o acúmulo pela
-		// metade. Se voltar underrun/corte, subir; o prime (jitterTarget) já dá a folga base.
-		in:       make(chan []float32, 4),
+		in:       make(chan []float32, wspipeEnvInt("WSPIPE_BUFFER", bufferDefault, 1)),
 		onClient: onClient,
 		closed:   make(chan struct{}),
+		jitter:   wspipeEnvInt("WSPIPE_JITTER", jitterDefault, 0),
 	}
 }
 
@@ -75,7 +85,7 @@ func (p *WSPipe) ReadFrame() ([]float32, error) {
 	}
 	p.mu.Lock()
 	if !p.primed {
-		if len(p.in) >= jitterTarget {
+		if len(p.in) >= p.jitter {
 			p.primed = true
 		} else {
 			p.mu.Unlock()
