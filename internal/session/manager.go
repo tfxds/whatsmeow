@@ -224,14 +224,23 @@ func (m *Manager) consumeQR(connectionID string, qrChan <-chan whatsmeow.QRChann
 			m.mu.Unlock()
 			m.log.Infof("QR code emitido para %s (len=%d)", connectionID, len(raw))
 		case "success":
+			var cli *whatsmeow.Client
 			m.mu.Lock()
 			if s, ok := m.sessions[connectionID]; ok {
 				s.LastQR = ""
 				s.Connected = true
 				s.qrActive = false
+				cli = s.Client
 			}
 			m.mu.Unlock()
 			m.log.Infof("QR SUCCESS — pareado %s", connectionID)
+			// CRÍTICO: no pareamento FRESCO precisa chamar onConnected (→ EnsureClient) pra
+			// registrar o OnIncomingCall. Antes só era chamado na reconexão/"already paired"
+			// (linha ~202), então número recém-pareado decriptava a chamada mas NUNCA tocava
+			// (o ring só vinha depois de um restart do serviço). Handlers persistem pelo 515-reconnect.
+			if cli != nil && m.onConnected != nil {
+				m.onConnected(connectionID, cli)
+			}
 			return
 		default:
 			// "timeout", "error", etc. — o canal naturalmente encerra; o whatsmeow já
