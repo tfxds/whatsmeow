@@ -6,8 +6,10 @@ import (
 	"fmt"
 
 	_ "github.com/lib/pq"
+	wmstore "go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	waLog "go.mau.fi/whatsmeow/util/log"
+	"google.golang.org/protobuf/proto"
 )
 
 // Conn represents a single WhatsApp connection owned by a tenant.
@@ -39,6 +41,17 @@ CREATE TABLE IF NOT EXISTS connections (
 // ensures the connections table exists.
 func Open(ctx context.Context, dsn string) (*Store, error) {
 	logger := waLog.Stdout("Store", "INFO", true)
+
+	// 🚫 HISTORY SYNC MÍNIMO: este número é usado só pra LIGAÇÃO (API Plus), não queremos
+	// histórico. Por padrão o whatsmeow se anuncia como cliente completo e o WhatsApp empurra
+	// um history sync pesado no pareamento (1000+ contatos, secret keys, grupos) que satura a
+	// conexão ~1-2min e deixa a PRIMEIRA ligação pós-conexão lenta. Zeramos os limites pra pedir
+	// histórico mínimo → parear→ligar fica rápido. (RequireFullSync já é false por padrão.)
+	if wmstore.DeviceProps.HistorySyncConfig != nil {
+		wmstore.DeviceProps.HistorySyncConfig.FullSyncDaysLimit = proto.Uint32(0)
+		wmstore.DeviceProps.HistorySyncConfig.FullSyncSizeMbLimit = proto.Uint32(0)
+		wmstore.DeviceProps.HistorySyncConfig.RecentSyncDaysLimit = proto.Uint32(0)
+	}
 
 	container, err := sqlstore.New(ctx, "postgres", dsn, logger)
 	if err != nil {
