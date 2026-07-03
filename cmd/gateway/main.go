@@ -5,13 +5,16 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/nextflow/whatsmeow-gateway/internal/api"
+	"github.com/nextflow/whatsmeow-gateway/internal/asterisk"
 	"github.com/nextflow/whatsmeow-gateway/internal/call"
 	"github.com/nextflow/whatsmeow-gateway/internal/config"
 	"github.com/nextflow/whatsmeow-gateway/internal/session"
 	"github.com/nextflow/whatsmeow-gateway/internal/store"
 	"github.com/nextflow/whatsmeow-gateway/internal/webhook"
+	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
 func main() {
@@ -66,6 +69,19 @@ func main() {
 
 	restAPI := &api.API{Mgr: mgr, Store: st, Calls: calls, AdminToken: cfg.AdminToken}
 	restAPI.Register(mux)
+
+	// Ponte AudioSocket (migração NexCall→whatsmeow) — GATEADO por env: só sobe na instância
+	// do NexCall (que seta AUDIOSOCKET_ADDR, ex ":9092"). O gateway de PRODUÇÃO do NextFlow (225)
+	// NÃO seta a env → nunca abre o listener. Mantém os dois 100% separados.
+	if asAddr := os.Getenv("AUDIOSOCKET_ADDR"); asAddr != "" {
+		asSrv := asterisk.NewServer(asAddr, waLog.Stdout("AudioSocket", "INFO", true))
+		asSrv.OnCall(restAPI.BridgeAudioSocket)
+		go func() {
+			if err := asSrv.Start(); err != nil {
+				log.Printf("audiosocket server: %v", err)
+			}
+		}()
+	}
 
 	addr := ":" + cfg.Port
 	log.Printf("gateway listening on %s", addr)

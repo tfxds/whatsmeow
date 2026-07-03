@@ -58,6 +58,12 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/session/restart", a.handleRestart)   // POST {connectionId} — reconecta
 	mux.HandleFunc("/contacts/list", a.handleContacts)    // POST {connectionId} — lista contatos
 	mux.HandleFunc("/groups/list", a.handleGroups)        // POST {connectionId} — lista grupos
+
+	// NexCall (migração whatsmeow): ponte AudioSocket. Registra a intenção do UUID ANTES do
+	// Asterisk conectar. Só útil na instância do NexCall (AudioSocket gateado por env no main);
+	// no gateway do NextFlow (225) essas rotas existem mas ninguém usa (sem Asterisk/AudioSocket).
+	mux.HandleFunc("/asterisk/accept", a.handleAsteriskAccept) // POST {uuid, callId} — aceita inbound
+	mux.HandleFunc("/asterisk/dial", a.handleAsteriskDial)     // POST {uuid, connId, phone} — disca outbound
 }
 
 // writeJSON encodes v as a JSON response with the given status code.
