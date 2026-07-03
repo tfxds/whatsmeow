@@ -50,7 +50,7 @@ func (a *API) BridgeAudioSocket(conn *asterisk.Conn) {
 	// 20ms A CADA 20ms SEMPRE (chunk real quando tem na fila, silêncio quando não), mantendo a
 	// perna SIP viva desde o instante em que o AudioSocket conecta.
 	const chunk8k = 320 // 20ms de slin 8k
-	downQ := make(chan []byte, 64)
+	downQ := make(chan []byte, 12) // teto ~240ms; drop-oldest pra não crescer latência
 	var downOnce sync.Once
 	pipe := call.NewWSPipe(func(s16 []byte) {
 		down := asterisk.Down16to8(s16)
@@ -66,7 +66,15 @@ func (a *API) BridgeAudioSocket(conn *asterisk.Conn) {
 			copy(c, down[off:end])
 			select {
 			case downQ <- c:
-			default: // fila cheia → descarta (não deixa acumular atraso)
+			default: // fila cheia → descarta o mais VELHO e enfileira o novo (latência baixa)
+				select {
+				case <-downQ:
+				default:
+				}
+				select {
+				case downQ <- c:
+				default:
+				}
 			}
 		}
 	})
@@ -74,6 +82,8 @@ func (a *API) BridgeAudioSocket(conn *asterisk.Conn) {
 	// PUMP do downlink: 20ms a cada 20ms (real ou silêncio), começa já — mantém o app_audiosocket
 	// do Asterisk alimentado mesmo antes/durante o accept (senão ele erra e derruba o ramal).
 	pumpStop := make(chan struct{})
+	var stopPumpOnce sync.Once
+	stopPump := func() { stopPumpOnce.Do(func() { close(pumpStop) }) }
 	go func() {
 		silence := make([]byte, chunk8k)
 		// PRIMING: manda silêncio JÁ (o app_audiosocket do Asterisk lê o socket logo após o UUID
@@ -102,7 +112,7 @@ func (a *API) BridgeAudioSocket(conn *asterisk.Conn) {
 			}
 		}
 	}()
-	defer close(pumpStop)
+	defer stopPump()
 	noState := func(string) {}
 
 	var mcall *meowcaller.Call
@@ -126,12 +136,25 @@ func (a *API) BridgeAudioSocket(conn *asterisk.Conn) {
 		return
 	}
 	log.Printf("[bridge] chamada %s iniciada — ponte de áudio ativa (uplink 8k→16k / downlink 16k→8k)", intent.kind)
+	// Se a chamada WhatsApp encerrar (cliente desligou), fecha o AudioSocket → o app_audiosocket
+	// do Asterisk recebe EOF e derruba o ramal SIP (senão o softphone fica "pendurado").
+	mcall.OnEnd(func(reason string) {
+		log.Printf("[bridge] chamada WhatsApp encerrou (%s) → HANGUP no AudioSocket (encerra SIP)", reason)
+		stopPump()                // para o silêncio antes de mandar o HANGUP
+		_ = conn.WriteHangup()    // frame 0x00 → app_audiosocket sai limpo → dialplan Hangup → BYE
+		go func() { time.Sleep(200 * time.Millisecond); conn.Close() }() // fallback: fecha o TCP
+	})
 	defer func() {
 		_ = mcall.Hangup()
 		_ = pipe.Close()
 	}()
 
-	// uplink: áudio do ramal (Asterisk 8k) → chamada WhatsApp (16k)
+	// uplink: áudio do ramal (Asterisk 8k, 20ms) → chamada WhatsApp. O encoder MLow do meowcaller
+	// espera frames de FrameSamples (960 samples = 60ms = 1920 bytes s16le); o AudioSocket entrega
+	// 20ms (após Up8to16 = 320 samples 16k = 640 bytes). ACUMULAMOS 3× 20ms → 1 frame de 60ms antes
+	// do PushMic — senão enc.Encode recebe frame do tamanho errado e o uplink NÃO sobe pro cliente.
+	const frame16 = meowcaller.FrameSamples * 2 // 960 samples * 2 bytes
+	var upBuf []byte
 	first := true
 	for {
 		s16 := conn.ReadAudio()
@@ -140,10 +163,14 @@ func (a *API) BridgeAudioSocket(conn *asterisk.Conn) {
 			return
 		}
 		if first {
-			log.Printf("[bridge] 1º frame do Asterisk = %d bytes (8k=320 / 16k=640)", len(s16))
+			log.Printf("[bridge] 1º frame do Asterisk = %d bytes → acumulando em frames de %d (uplink)", len(s16), frame16)
 			first = false
 		}
-		pipe.PushMic(asterisk.Up8to16(s16))
+		upBuf = append(upBuf, asterisk.Up8to16(s16)...)
+		for len(upBuf) >= frame16 {
+			pipe.PushMic(upBuf[:frame16])
+			upBuf = upBuf[frame16:]
+		}
 	}
 }
 

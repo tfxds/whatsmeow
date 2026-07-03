@@ -73,6 +73,16 @@ func (c *Conn) WriteAudio(s16 []byte) error {
 	return err
 }
 
+// WriteHangup manda o frame HANGUP (0x00 + len 0) do protocolo AudioSocket. Faz o app_audiosocket
+// do Asterisk SAIR LIMPO (não por erro de leitura), pra o dialplan rodar Hangup() e mandar um BYE
+// de verdade pro softphone. Só fechar o TCP deixa o SIP pendurado no cliente (gotcha do SheIITear).
+func (c *Conn) WriteHangup() error {
+	c.wmu.Lock()
+	defer c.wmu.Unlock()
+	_, err := c.raw.Write([]byte{asKindTerminate, 0x00, 0x00})
+	return err
+}
+
 // Close encerra a conexão AudioSocket.
 func (c *Conn) Close() {
 	c.once.Do(func() {
