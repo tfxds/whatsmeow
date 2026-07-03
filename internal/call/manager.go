@@ -23,6 +23,7 @@ type Manager struct {
 	mu       sync.Mutex
 	clients  map[string]*meowcaller.Client
 	clientWa map[string]*whatsmeow.Client // qual *whatsmeow.Client cada connID registrou — pra re-registrar handlers quando o wa TROCA (repareamento/reconexão)
+	incomingWa map[string]*whatsmeow.Client // qual *whatsmeow.Client já teve o OnIncomingCall registrado — SEPARADO de clientWa (que o clientFor seta em ligação OUTBOUND sem registrar inbound). Sem isso, ligar (outbound) antes fazia o EnsureClient pular o registro do inbound → não tocava.
 	active   map[string]*meowcaller.Call  // chamadas OUTBOUND ativas, por callID (várias simultâneas no mesmo número)
 	log     waLog.Logger
 
@@ -46,6 +47,7 @@ func NewManager() *Manager {
 	return &Manager{
 		clients:     make(map[string]*meowcaller.Client),
 		clientWa:    make(map[string]*whatsmeow.Client),
+		incomingWa:  make(map[string]*whatsmeow.Client),
 		active:      make(map[string]*meowcaller.Call),
 		pending:     make(map[string]*inboundCall),
 		callerPhone: make(map[string]string),
@@ -188,8 +190,12 @@ func (m *Manager) EnsureClient(connID string, wa *whatsmeow.Client) {
 	// NOVO — precisa re-registrar o event handler + OnIncomingCall nele (senão a chamada
 	// recebida decripta mas nunca dispara o "atendendo/ring" → não toca). Antes checava só o
 	// connID e pulava, exigindo restart do serviço a cada repareamento.
+	// Guard pelo incomingWa (NÃO pelo clientWa): o clientFor seta clientWa numa ligação
+	// OUTBOUND sem registrar o OnIncomingCall. Se guardássemos por clientWa, ligar antes de
+	// receber pulava o registro do inbound → decriptava mas não tocava. incomingWa só é setado
+	// aqui, depois de registrar o handler de fato.
 	m.mu.Lock()
-	sameWa := m.clientWa[connID] == wa
+	sameWa := m.incomingWa[connID] == wa
 	m.mu.Unlock()
 	if sameWa {
 		return
@@ -208,6 +214,7 @@ func (m *Manager) EnsureClient(connID string, wa *whatsmeow.Client) {
 
 	m.mu.Lock()
 	mc := m.clientFor(connID, wa)
+	m.incomingWa[connID] = wa // marca ANTES de registrar (síncrono) — evita registro duplicado
 	m.mu.Unlock()
 
 	mc.OnIncomingCall(func(call *meowcaller.Call) {
