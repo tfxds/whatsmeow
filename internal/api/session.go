@@ -131,5 +131,6 @@ func (a *API) handleStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"connected": connected,
 		"found":     found,
+		"number":    a.Mgr.PhoneNumber(connectionID), // chip do número no card da integração
 	})
 }

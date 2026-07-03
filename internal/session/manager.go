@@ -321,6 +321,18 @@ func (m *Manager) Status(connectionID string) (qr string, connected bool, ok boo
 	return qr, connected, true
 }
 
+// PhoneNumber devolve o número do device pareado (User do JID, ex: "553491173950"), ou ""
+// se não há sessão/device. Usado pra mostrar o chip do número no card da integração.
+func (m *Manager) PhoneNumber(connectionID string) string {
+	m.mu.RLock()
+	s, found := m.sessions[connectionID]
+	m.mu.RUnlock()
+	if !found || s.Client == nil || s.Client.Store == nil || s.Client.Store.ID == nil {
+		return ""
+	}
+	return s.Client.Store.ID.User
+}
+
 // attachHandlers wires whatsmeow events to the webhook dispatcher and status.
 func (m *Manager) attachHandlers(sess *Session) {
 	connID := sess.ConnectionID
