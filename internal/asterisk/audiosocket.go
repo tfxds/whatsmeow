@@ -62,13 +62,14 @@ func (c *Conn) WriteAudio(s16 []byte) error {
 	}
 	c.wmu.Lock()
 	defer c.wmu.Unlock()
-	var hdr [3]byte
-	hdr[0] = asKindAudio
-	binary.BigEndian.PutUint16(hdr[1:], uint16(len(s16)))
-	if _, err := c.raw.Write(hdr[:]); err != nil {
-		return err
-	}
-	_, err := c.raw.Write(s16)
+	// Header + payload num ÚNICO Write (= 1 segmento TCP), igual o SheIITear (Buffer.concat).
+	// Em dois writes separados o app_audiosocket do Asterisk falhava ao ler o payload
+	// ("Failed to receive frame") quando ele chegava em segmento próprio.
+	buf := make([]byte, 3+len(s16))
+	buf[0] = asKindAudio
+	binary.BigEndian.PutUint16(buf[1:], uint16(len(s16)))
+	copy(buf[3:], s16)
+	_, err := c.raw.Write(buf)
 	return err
 }
 
@@ -124,9 +125,11 @@ func (s *Server) handle(raw net.Conn) {
 	defer c.Close()
 
 	fired := false
+	frames := 0
 	hdr := make([]byte, 3)
 	for {
 		if _, err := io.ReadFull(raw, hdr); err != nil {
+			s.log.Warnf("[AudioSocket] leitura do header falhou após %d frames: %v", frames, err)
 			return
 		}
 		kind := hdr[0]
@@ -135,8 +138,13 @@ func (s *Server) handle(raw net.Conn) {
 		if n > 0 {
 			payload = make([]byte, n)
 			if _, err := io.ReadFull(raw, payload); err != nil {
+				s.log.Warnf("[AudioSocket] leitura do payload (kind=0x%02x len=%d) falhou: %v", kind, n, err)
 				return
 			}
+		}
+		frames++
+		if frames <= 3 {
+			s.log.Infof("[AudioSocket] frame #%d kind=0x%02x len=%d", frames, kind, n)
 		}
 		switch kind {
 		case asKindUUID:
@@ -159,7 +167,10 @@ func (s *Server) handle(raw net.Conn) {
 				}
 			}
 		case asKindTerminate, asKindError:
+			s.log.Warnf("[AudioSocket] Asterisk mandou kind=0x%02x (terminate/error) após %d frames → fechando", kind, frames)
 			return
+		default:
+			s.log.Warnf("[AudioSocket] frame DESCONHECIDO kind=0x%02x len=%d (ignorando)", kind, n)
 		}
 	}
 }
