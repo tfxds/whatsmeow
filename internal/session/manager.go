@@ -425,8 +425,22 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 			continue
 		}
 		if dev == nil {
-			m.log.Warnf("restore %s: no device for JID %s (skipping)", conn.ConnectionID, conn.JID)
-			continue
+			// FALLBACK: o device index (ex :69) muda quando o número é re-pareado, mas o número
+			// (User do JID) fica. Acha o device cujo User bate — evita ter que re-parear a cada
+			// restart do gateway (o JID guardado fica stale após um re-pareamento).
+			if devs, e2 := m.store.Container.GetAllDevices(ctx); e2 == nil {
+				for _, d := range devs {
+					if d.ID != nil && d.ID.User == jid.User {
+						dev = d
+						m.log.Infof("restore %s: device %s casado por número (JID guardado %s estava stale)", conn.ConnectionID, d.ID.String(), conn.JID)
+						break
+					}
+				}
+			}
+			if dev == nil {
+				m.log.Warnf("restore %s: no device for JID %s (skipping)", conn.ConnectionID, conn.JID)
+				continue
+			}
 		}
 
 		cli := whatsmeow.NewClient(dev, m.log)
