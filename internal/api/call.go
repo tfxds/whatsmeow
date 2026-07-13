@@ -70,6 +70,29 @@ func (a *API) handleCallHangup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
+// handleCallHold coloca a chamada em transferência (hold): toca hold pro cliente e impede
+// que o WS do atendente que está saindo derrube a call. O novo atendente pluga via
+// /call/ws?attach=<callId>. Usado na transferência de ligação entre atendentes.
+func (a *API) handleCallHold(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req callHangupRequest // mesma forma: {connectionId, callId}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	if _, ok := a.authConn(w, r, req.ConnectionID); !ok {
+		return
+	}
+	if err := a.Calls.HoldForTransfer(req.CallID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
 // callDigitsOnly remove tudo que não é dígito.
 func callDigitsOnly(s string) string {
 	var b strings.Builder

@@ -20,6 +20,7 @@ func (a *API) handleCallWS(w http.ResponseWriter, r *http.Request) {
 	phone := callDigitsOnly(q.Get("phone"))
 	token := q.Get("token")
 	accept := q.Get("accept")
+	attach := q.Get("attach") // TRANSFERÊNCIA: plugar numa chamada já viva (não disca, não re-atende)
 
 	conn, err := a.findConn(r.Context(), connID)
 	if err != nil {
@@ -30,7 +31,7 @@ func (a *API) handleCallWS(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid token or connection")
 		return
 	}
-	if accept == "" && phone == "" {
+	if accept == "" && phone == "" && attach == "" {
 		writeError(w, http.StatusBadRequest, "phone is required")
 		return
 	}
@@ -54,18 +55,30 @@ func (a *API) handleCallWS(w http.ResponseWriter, r *http.Request) {
 		_ = c.Write(ctx, websocket.MessageText, []byte(`{"type":"state","state":"`+state+`"}`))
 	}
 	var mcall *meowcaller.Call
-	if accept != "" {
+	var callID string
+	switch {
+	case attach != "":
+		callID = attach
+		mcall, err = a.Calls.AttachAudio(attach, pipe, pipe, sendState)
+	case accept != "":
+		callID = accept
 		mcall, err = a.Calls.AcceptIncoming(accept, pipe, pipe, sendState)
-	} else {
-		mcall, _, err = a.Calls.StartWithPipe(ctx, connID, sess.Client, phone, pipe, pipe, sendState)
+	default:
+		mcall, callID, err = a.Calls.StartWithPipe(ctx, connID, sess.Client, phone, pipe, pipe, sendState)
 	}
 	if err != nil {
 		_ = c.Close(websocket.StatusInternalError, err.Error())
 		return
 	}
 	defer func() {
-		_ = mcall.Hangup()
-		_ = pipe.Close()
+		// Em TRANSFERÊNCIA (hold) NÃO derruba a call — só solta o pipe. A call segue viva
+		// esperando o novo atendente plugar (AttachAudio). Fora de transferência, encerra normal.
+		if a.Calls.IsHeld(callID) {
+			_ = pipe.Close()
+		} else {
+			_ = mcall.Hangup()
+			_ = pipe.Close()
+		}
 	}()
 
 	for {

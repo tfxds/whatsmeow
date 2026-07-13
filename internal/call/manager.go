@@ -28,6 +28,7 @@ type Manager struct {
 	log     waLog.Logger
 
 	pending     map[string]*inboundCall                // chamadas RECEBIDAS (já atendidas no protocolo, tocando ringback), por callID
+	held        map[string]bool                        // callID → em TRANSFERÊNCIA (hold): não derrubar a call quando o WS do atendente fechar
 	callerPhone map[string]string                      // callID → telefone REAL do chamador (CallCreatorAlt)
 	onIncoming  func(connID, callID, fromPhone string, isVideo bool) // dispara webhook IncomingCall (setado pela API/main)
 	onCallEnded func(connID, callID string)            // dispara webhook CallEnded (para a UI de tocar)
@@ -50,6 +51,7 @@ func NewManager() *Manager {
 		incomingWa:  make(map[string]*whatsmeow.Client),
 		active:      make(map[string]*meowcaller.Call),
 		pending:     make(map[string]*inboundCall),
+		held:        make(map[string]bool),
 		callerPhone: make(map[string]string),
 		log:         waLog.Stdout("Call", "INFO", true),
 	}
@@ -108,6 +110,7 @@ func (m *Manager) place(ctx context.Context, connID string, wa *whatsmeow.Client
 		}
 		m.mu.Lock()
 		delete(m.active, callID)
+		delete(m.held, callID)
 		m.mu.Unlock()
 	})
 
@@ -282,6 +285,7 @@ func (m *Manager) EnsureClient(connID string, wa *whatsmeow.Client) {
 		call.OnEnd(func(reason string) {
 			m.mu.Lock()
 			delete(m.pending, callID)
+			delete(m.held, callID)
 			onState := ic.onState
 			m.mu.Unlock()
 			m.log.Infof("INBOUND call %s encerrada (%s)", callID, reason)
@@ -359,6 +363,71 @@ func (m *Manager) AcceptIncoming(callID string, src meowcaller.AudioSource, sink
 		onState("ready")
 	}
 	return ic.call, nil
+}
+
+// IsHeld diz se a chamada está em transferência (hold) — usado pelo WS de áudio pra NÃO
+// derrubar a call quando o WS do atendente que está saindo fechar.
+func (m *Manager) IsHeld(callID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.held[callID]
+}
+
+func (m *Manager) clearHeld(callID string) {
+	m.mu.Lock()
+	delete(m.held, callID)
+	m.mu.Unlock()
+}
+
+// HoldForTransfer marca a chamada como em transferência: toca hold (ringback) pro cliente e
+// impede que o próximo fechamento de WS a derrube. Guarda de 60s: se ninguém pegar, encerra.
+func (m *Manager) HoldForTransfer(callID string) error {
+	call := m.CallByID(callID)
+	if call == nil {
+		return fmt.Errorf("chamada %s nao esta ativa (transfer)", callID)
+	}
+	m.mu.Lock()
+	m.held[callID] = true
+	m.mu.Unlock()
+	call.Play(newRingbackSource())
+	call.Receive(meowcaller.SinkFunc(func([]float32) {}))
+	m.log.Infof("TRANSFER call %s em HOLD (aguardando novo atendente)", callID)
+	go func() {
+		time.Sleep(60 * time.Second)
+		if m.IsHeld(callID) {
+			m.log.Infof("TRANSFER call %s — ninguem pegou em 60s, encerrando", callID)
+			m.clearHeld(callID)
+			_ = call.Hangup()
+		}
+	}()
+	return nil
+}
+
+// AttachAudio re-liga um NOVO atendente (src/sink) a uma chamada JÁ ATIVA — é o coração da
+// TRANSFERÊNCIA. Diferente do AcceptIncoming, NÃO re-atende (a call já foi aceita): só troca
+// a fonte/sink ao vivo (o meowcaller lê a cada frame). Busca em active (outbound) e pending
+// (inbound). Limpa o hold.
+func (m *Manager) AttachAudio(callID string, src meowcaller.AudioSource, sink meowcaller.AudioSink, onState func(string)) (*meowcaller.Call, error) {
+	m.mu.Lock()
+	var call *meowcaller.Call
+	if c, ok := m.active[callID]; ok {
+		call = c
+	} else if ic, ok := m.pending[callID]; ok {
+		call = ic.call
+		ic.onState = onState // o OnEnd (setado no EnsureClient) avisa o NOVO atendente ao encerrar
+	}
+	delete(m.held, callID) // novo atendente pegou → sai do hold
+	m.mu.Unlock()
+	if call == nil {
+		return nil, fmt.Errorf("chamada %s nao esta ativa (transfer attach)", callID)
+	}
+	m.log.Infof("TRANSFER call %s — novo atendente plugado (attach)", callID)
+	call.Play(src)
+	call.Receive(sink)
+	if onState != nil {
+		onState("ready")
+	}
+	return call, nil
 }
 
 // RejectIncoming recusa uma chamada recebida. Como ela já foi atendida no protocolo

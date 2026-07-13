@@ -47,6 +47,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	// Call (PoC): outbound áudio + hangup.
 	mux.HandleFunc("/call/start", a.handleCallStart)   // POST {connectionId, Phone}
 	mux.HandleFunc("/call/hangup", a.handleCallHangup) // POST {connectionId}
+	mux.HandleFunc("/call/hold", a.handleCallHold)     // POST {connectionId, callId} — transferência: segura a call
 	mux.HandleFunc("/call/ws", a.handleCallWS)             // WS áudio {connectionId,phone,token}
 	mux.HandleFunc("/call/video-ws", a.handleVideoWS)      // WS vídeo {connectionId,callId,token}
 	mux.HandleFunc("/call/reject", a.handleCallReject)     // POST {connectionId, callId}
