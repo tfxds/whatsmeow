@@ -5,6 +5,7 @@ package audio
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"math"
 	"os"
@@ -85,4 +86,76 @@ func DurationSeconds(media []byte) uint32 {
 		return 0
 	}
 	return uint32(math.Round(secs))
+}
+
+// Waveform gera as "ondinhas" da nota de voz que o WhatsApp desenha.
+// Sem AudioMessage.Waveform ele mostra um player genérico em vez da barra de áudio
+// nativa (o áudio toca igual, mas "não fica com cara de WhatsApp").
+//
+// Formato que o WhatsApp espera: 64 bytes, cada um de 0 a 127, sendo a amplitude média
+// absoluta de 1/64 do áudio. Pipeline: ffmpeg -> PCM s16le mono 8kHz (64 barras não
+// precisam de mais taxa) -> normaliza -> 64 fatias -> média |amp| * 127, normalizado
+// pelo pico (voz é baixa e sairia uma linha reta).
+//
+// Best-effort: retorna nil se não conseguir — aí o áudio vai sem waveform (não trava).
+func Waveform(media []byte) []byte {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "ffmpeg",
+		"-i", "pipe:0",
+		"-vn",
+		"-ac", "1", // mono
+		"-ar", "8000", // 8kHz basta pra 64 barras
+		"-f", "s16le",
+		"-acodec", "pcm_s16le",
+		"pipe:1",
+	)
+	cmd.Stdin = bytes.NewReader(media)
+	var out, stderr bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil
+	}
+
+	pcm := out.Bytes()
+	total := len(pcm) / 2 // amostras de 16 bits
+	if total < 64 {
+		return nil
+	}
+	per := total / 64
+
+	wave := make([]byte, 64)
+	var peak float64
+	raw := make([]float64, 64)
+	for i := 0; i < 64; i++ {
+		var sum float64
+		for j := 0; j < per; j++ {
+			off := ((i * per) + j) * 2
+			s := int16(binary.LittleEndian.Uint16(pcm[off : off+2]))
+			v := float64(s)
+			if v < 0 {
+				v = -v
+			}
+			sum += v / 32768 // normaliza 0..1
+		}
+		raw[i] = sum / float64(per)
+		if raw[i] > peak {
+			peak = raw[i]
+		}
+	}
+	for i := 0; i < 64; i++ {
+		v := raw[i]
+		if peak > 0 {
+			v = (v / peak) * 110 // normaliza pelo pico
+		} else {
+			v = v * 127
+		}
+		if v > 127 {
+			v = 127
+		}
+		wave[i] = byte(math.Round(v))
+	}
+	return wave
 }
