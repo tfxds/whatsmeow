@@ -1,6 +1,8 @@
 package session
 
 import (
+	"encoding/json"
+	"log"
 	"time"
 
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -108,6 +110,59 @@ func normalizeMessage(connID, tenantID string, m *events.Message) map[string]any
 				},
 			}
 		}
+		// RESPOSTA DE MENU INTERATIVO (o cliente tocou num botão/opção da lista).
+		//
+		// Sem isto o toque no menu SUMIA: o gateway só extraía conversation/extendedText,
+		// então a seleção chegava sem texto e o NextFlow descartava a mensagem — o fluxo
+		// travava esperando uma resposta que nunca vinha (caso KAS Tecnologia).
+		//
+		// Mandamos no MESMO formato do Baileys (listResponseMessage/buttonsResponseMessage)
+		// porque o webhook do NextFlow já sabe ler esses dois — não precisa mexer lá.
+		if ir := wa.GetInteractiveResponseMessage(); ir != nil {
+			// NativeFlow: o id/label vem num JSON dentro de ParamsJSON.
+			// Ex: {"id":"opcao_1"} (quick_reply) ou {"id":"...","description":"..."} (single_select)
+			id := ""
+			if nf := ir.GetNativeFlowResponseMessage(); nf != nil {
+				var params map[string]any
+				if err := json.Unmarshal([]byte(nf.GetParamsJSON()), &params); err == nil {
+					for _, k := range []string{"id", "selectedId", "row_id", "rowId"} {
+						if v, ok := params[k].(string); ok && v != "" {
+							id = v
+							break
+						}
+					}
+				}
+			}
+			body := ir.GetBody().GetText() // o rótulo que o cliente viu
+			if id == "" {
+				id = body
+			}
+			if id != "" || body != "" {
+				msgMap["listResponseMessage"] = map[string]any{
+					"title": body,
+					"singleSelectReply": map[string]any{"selectedRowId": id},
+				}
+				log.Printf("session: resposta de menu interativo id=%q label=%q", id, body)
+			}
+		}
+
+		// Resposta de lista/botão no formato CLÁSSICO (não-NativeFlow). Dependendo da
+		// versão do WhatsApp do cliente vem por aqui em vez do InteractiveResponse.
+		if lr := wa.GetListResponseMessage(); lr != nil {
+			msgMap["listResponseMessage"] = map[string]any{
+				"title":             lr.GetTitle(),
+				"singleSelectReply": map[string]any{"selectedRowId": lr.GetSingleSelectReply().GetSelectedRowID()},
+			}
+			log.Printf("session: resposta de lista (clássica) id=%q", lr.GetSingleSelectReply().GetSelectedRowID())
+		}
+		if br := wa.GetButtonsResponseMessage(); br != nil {
+			msgMap["buttonsResponseMessage"] = map[string]any{
+				"selectedButtonId":    br.GetSelectedButtonID(),
+				"selectedDisplayText": br.GetSelectedDisplayText(),
+			}
+			log.Printf("session: resposta de botão (clássica) id=%q", br.GetSelectedButtonID())
+		}
+
 		if img := wa.GetImageMessage(); img != nil {
 			msgMap["imageMessage"] = map[string]any{
 				"mimetype":      img.GetMimetype(),
