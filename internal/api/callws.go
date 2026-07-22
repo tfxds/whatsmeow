@@ -110,7 +110,12 @@ func (a *API) handleCallWS(w http.ResponseWriter, r *http.Request) {
 		}
 		if rec != nil {
 			size := rec.Close()
-			fmt.Printf("[REC] call %s: gravacao encerrada (%d bytes) %s\n", callID, size, rec.Path())
+			p := rec.Path()
+			fmt.Printf("[REC] call %s: gravacao encerrada (%d bytes) %s\n", callID, size, p)
+			// Envia pro NextFlow (S3) em background; apaga o raw local no sucesso.
+			if size > 0 && p != "" {
+				go shipRecording(conn.WebhookURL, connID, conn.Token, callID, p)
+			}
 		}
 	}()
 
