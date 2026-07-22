@@ -5,11 +5,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 
 	"github.com/coder/websocket"
 	"github.com/nextflow/whatsmeow-gateway/internal/call"
 	"github.com/purpshell/meowcaller"
 )
+
+// recordingsDir devolve o diretório onde as gravações de chamada são escritas.
+// Configurável por GW_RECORDINGS_DIR; default /var/lib/whatsmeow-gateway/recordings.
+func recordingsDir() string {
+	if d := os.Getenv("GW_RECORDINGS_DIR"); d != "" {
+		return d
+	}
+	return "/var/lib/whatsmeow-gateway/recordings"
+}
 
 // handleCallWS: WebSocket de áudio de uma chamada. Query: connectionId, phone, token.
 // Browser manda frames s16le 16kHz/960 (mic) em mensagens binárias; o gateway devolve
@@ -54,21 +64,40 @@ func (a *API) handleCallWS(w http.ResponseWriter, r *http.Request) {
 	sendState := func(state string) {
 		_ = c.Write(ctx, websocket.MessageText, []byte(`{"type":"state","state":"`+state+`"}`))
 	}
+	// Gravação (gated por record=1): embrulha o pipe pra capturar uplink+downlink e mixar
+	// num raw local. O NextFlow passa record=1 no WS quando o tenant tem gravação ligada.
+	var rec *call.Recorder
+	var src meowcaller.AudioSource = pipe
+	var sink meowcaller.AudioSink = pipe
+	if q.Get("record") == "1" {
+		rec = call.NewRecorder(recordingsDir(), connID)
+		src = rec.Source(pipe)
+		sink = rec.Sink(pipe)
+	}
+
 	var mcall *meowcaller.Call
 	var callID string
 	switch {
 	case attach != "":
 		callID = attach
-		mcall, err = a.Calls.AttachAudio(attach, pipe, pipe, sendState)
+		mcall, err = a.Calls.AttachAudio(attach, src, sink, sendState)
 	case accept != "":
 		callID = accept
-		mcall, err = a.Calls.AcceptIncoming(accept, pipe, pipe, sendState)
+		mcall, err = a.Calls.AcceptIncoming(accept, src, sink, sendState)
 	default:
-		mcall, callID, err = a.Calls.StartWithPipe(ctx, connID, sess.Client, phone, pipe, pipe, sendState)
+		mcall, callID, err = a.Calls.StartWithPipe(ctx, connID, sess.Client, phone, src, sink, sendState)
 	}
 	if err != nil {
 		_ = c.Close(websocket.StatusInternalError, err.Error())
 		return
+	}
+	if rec != nil {
+		if e := rec.Begin(callID); e != nil {
+			fmt.Printf("[REC] call %s: nao consegui abrir arquivo: %v\n", callID, e)
+			rec = nil
+		} else {
+			fmt.Printf("[REC] call %s: gravando em %s\n", callID, rec.Path())
+		}
 	}
 	defer func() {
 		// Em TRANSFERÊNCIA (hold) NÃO derruba a call — só solta o pipe. A call segue viva
@@ -78,6 +107,10 @@ func (a *API) handleCallWS(w http.ResponseWriter, r *http.Request) {
 		} else {
 			_ = mcall.Hangup()
 			_ = pipe.Close()
+		}
+		if rec != nil {
+			size := rec.Close()
+			fmt.Printf("[REC] call %s: gravacao encerrada (%d bytes) %s\n", callID, size, rec.Path())
 		}
 	}()
 
