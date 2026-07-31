@@ -60,6 +60,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/session/restart", a.handleRestart)   // POST {connectionId} — reconecta
 	mux.HandleFunc("/contacts/list", a.handleContacts)    // POST {connectionId} — lista contatos
 	mux.HandleFunc("/groups/list", a.handleGroups)        // POST {connectionId} — lista grupos
+	mux.HandleFunc("/groups/participants", a.handleGroupParticipants) // POST {connectionId, jid} — membros do grupo
 
 	// NexCall (migração whatsmeow): ponte AudioSocket. Registra a intenção do UUID ANTES do
 	// Asterisk conectar. Só útil na instância do NexCall (AudioSocket gateado por env no main);

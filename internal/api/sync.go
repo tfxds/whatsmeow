@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"go.mau.fi/whatsmeow/types"
 )
 
 // syncReq é o corpo comum das ações de sync/restart (só precisa da conexão).
@@ -131,4 +133,89 @@ func (a *API) handleGroups(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "count": len(out), "groups": out})
+}
+
+// handleGroupParticipants — POST {connectionId, jid}: lista os MEMBROS de um grupo específico
+// (GetGroupInfo → Participants). Usado pra mostrar os participantes na ficha do contato no NextFlow.
+// Retorna [{jid, phone, lid, name, isAdmin, isSuperAdmin}] — o NextFlow resolve o nome via CRM depois.
+func (a *API) handleGroupParticipants(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req struct {
+		ConnectionID string `json:"connectionId"`
+		JID          string `json:"jid"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ConnectionID == "" || req.JID == "" {
+		writeError(w, http.StatusBadRequest, "connectionId and jid are required")
+		return
+	}
+	if _, ok := a.authConn(w, r, req.ConnectionID); !ok {
+		return
+	}
+	sess, ok := a.Mgr.Get(req.ConnectionID)
+	if !ok {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
+	gjid, err := types.ParseJID(req.JID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid group jid")
+		return
+	}
+	info, err := sess.Client.GetGroupInfo(r.Context(), gjid)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// Nome do participante vem do CONTACT STORE (o DisplayName do GroupParticipant é vazio, só
+	// preenche p/ anônimo). Monta mapa número→nome (fullname/first/business/pushname), igual /contacts/list.
+	nameByUser := map[string]string{}
+	if contacts, cerr := sess.Client.Store.Contacts.GetAllContacts(r.Context()); cerr == nil {
+		for cjid, c := range contacts {
+			n := strings.TrimSpace(c.FullName)
+			if n == "" {
+				n = strings.TrimSpace(c.FirstName)
+			}
+			if n == "" {
+				n = strings.TrimSpace(c.BusinessName)
+			}
+			if n == "" {
+				n = strings.TrimSpace(c.PushName)
+			}
+			if n != "" && cjid.User != "" {
+				nameByUser[cjid.User] = n
+			}
+		}
+	}
+	out := make([]map[string]any, 0, len(info.Participants))
+	for _, p := range info.Participants {
+		// Telefone: prefere PhoneNumber (quando o WA conhece o número real); senão, o JID
+		// se ele for @s.whatsapp.net (grupo não-LID). Em grupo LID o JID vem @lid → sem telefone.
+		phone := p.PhoneNumber.User
+		if phone == "" && p.JID.Server == types.DefaultUserServer {
+			phone = p.JID.User
+		}
+		name := strings.TrimSpace(p.DisplayName)
+		if name == "" {
+			for _, u := range []string{p.PhoneNumber.User, p.JID.User, p.LID.User} {
+				if u != "" {
+					if n, ok := nameByUser[u]; ok {
+						name = n
+						break
+					}
+				}
+			}
+		}
+		out = append(out, map[string]any{
+			"jid":          p.JID.String(),
+			"phone":        phone,
+			"lid":          p.LID.User,
+			"name":         name,
+			"isAdmin":      p.IsAdmin,
+			"isSuperAdmin": p.IsSuperAdmin,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "count": len(out), "participants": out})
 }
