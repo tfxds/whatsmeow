@@ -189,6 +189,16 @@ func (a *API) handleGroupParticipants(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// Nossa própria identidade, pra saber se ESTE número é admin (define se conseguimos enviar
+	// quando o grupo está em modo "só admins enviam" = IsAnnounce).
+	myPhone, myLID := "", ""
+	if sess.Client.Store.ID != nil {
+		myPhone = sess.Client.Store.ID.User
+	}
+	if sess.Client.Store.LID.User != "" {
+		myLID = sess.Client.Store.LID.User
+	}
+	meIsAdmin := false
 	out := make([]map[string]any, 0, len(info.Participants))
 	for _, p := range info.Participants {
 		// Telefone: prefere PhoneNumber (quando o WA conhece o número real); senão, o JID
@@ -208,6 +218,11 @@ func (a *API) handleGroupParticipants(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		isMe := (myPhone != "" && (p.PhoneNumber.User == myPhone || p.JID.User == myPhone)) ||
+			(myLID != "" && p.LID.User == myLID)
+		if isMe && (p.IsAdmin || p.IsSuperAdmin) {
+			meIsAdmin = true
+		}
 		out = append(out, map[string]any{
 			"jid":          p.JID.String(),
 			"phone":        phone,
@@ -217,5 +232,12 @@ func (a *API) handleGroupParticipants(w http.ResponseWriter, r *http.Request) {
 			"isSuperAdmin": p.IsSuperAdmin,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "count": len(out), "participants": out})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success":      true,
+		"count":        len(out),
+		"participants": out,
+		"isAnnounce":   info.IsAnnounce, // só admins podem enviar
+		"isLocked":     info.IsLocked,   // só admins editam infos do grupo
+		"meIsAdmin":    meIsAdmin,
+	})
 }
