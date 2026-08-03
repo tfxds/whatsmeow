@@ -31,6 +31,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/chat/send/video", a.handleSendMedia(kindVideo))       // POST {connectionId, Phone, Video, Caption}
 	mux.HandleFunc("/chat/send/document", a.handleSendMedia(kindDocument)) // POST {connectionId, Phone, Document, Caption, FileName}
 	mux.HandleFunc("/chat/send/audio", a.handleSendMedia(kindAudio))       // POST {connectionId, Phone, Audio}
+	mux.HandleFunc("/chat/send/status", a.handleSendStatus)                // POST {connectionId, Type, Text|File, BackgroundColor, Font} → status@broadcast
 	mux.HandleFunc("/chat/download", a.handleDownload)                     // POST {connectionId, kind, directPath, mediaKey, ...}
 
 	// Utilities (TASK 8).
