@@ -2,9 +2,12 @@ package call
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -12,6 +15,7 @@ import (
 
 	"github.com/purpshell/meowcaller"
 	"go.mau.fi/whatsmeow"
+	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
 )
@@ -212,6 +216,14 @@ func (m *Manager) EnsureClient(connID string, wa *whatsmeow.Client) {
 			m.mu.Lock()
 			m.callerPhone[co.CallID] = co.CallCreatorAlt.User
 			m.mu.Unlock()
+		}
+		// Captura da oferta crua pra alimentar o motor whatsapp.wasm offline (projeto da
+		// ponte de chamada). SÓ grava arquivo — não altera o fluxo da chamada. Desligado por
+		// padrão; ligar com WHATSMEOW_DUMP_CALL_STANZAS=1.
+		if os.Getenv("WHATSMEOW_DUMP_CALL_STANZAS") == "1" {
+			if co, ok := evt.(*events.CallOffer); ok {
+				go dumpOfferStanza(m.log, co)
+			}
 		}
 	})
 
@@ -469,4 +481,40 @@ func splitAnnexB(b []byte) [][]byte {
 		out = append(out, b[start:])
 	}
 	return out
+}
+
+// dumpOfferStanza grava a oferta crua no formato que o whatsapp.wasm consome
+// (handleIncomingSignalingOffer): payload = base64 do nó binário + metadados do peer.
+// Best-effort e fora do caminho da chamada — qualquer erro aqui só vira log.
+func dumpOfferStanza(log waLog.Logger, co *events.CallOffer) {
+	defer func() { _ = recover() }()
+	dir := "/var/lib/whatsmeow-gateway/callstanzas"
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	var payload string
+	if co.Data != nil {
+		if raw, err := waBinary.Marshal(*co.Data); err == nil {
+			payload = base64.StdEncoding.EncodeToString(raw)
+		}
+	}
+	rec := map[string]any{
+		"callId":         co.CallID,
+		"payload":        payload,
+		"peerJid":        co.From.String(),
+		"callCreator":    co.CallCreator.String(),
+		"callCreatorAlt": co.CallCreatorAlt.String(),
+		"peerPlatform":   co.RemotePlatform,
+		"peerAppVersion": co.RemoteVersion,
+		"timestamp":      co.Timestamp.UTC().Format(time.RFC3339),
+		"capturadoEm":    time.Now().UTC().Format(time.RFC3339),
+	}
+	b, err := json.MarshalIndent(rec, "", "  ")
+	if err != nil {
+		return
+	}
+	f := filepath.Join(dir, co.CallID+".json")
+	if err := os.WriteFile(f, b, 0o644); err == nil {
+		log.Infof("[DUMP] oferta gravada em %s (%d bytes de payload)", f, len(payload))
+	}
 }
