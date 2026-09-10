@@ -1,6 +1,7 @@
 package api
 
 import (
+	"go.mau.fi/whatsmeow"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -125,12 +126,19 @@ func (a *API) handleGroups(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(groups))
 	for _, g := range groups {
-		out = append(out, map[string]any{
+		item := map[string]any{
 			"jid":          g.JID.String(),
 			"name":         g.GroupName.Name,
 			"participants": len(g.Participants),
 			"owner":        g.OwnerJID.String(),
-		})
+		}
+		// Foto do grupo. Best-effort: grupo sem foto (ou com foto restrita) responde erro e
+		// o campo simplesmente não vem — não pode derrubar a listagem inteira por causa disso.
+		if pic, err := sess.Client.GetProfilePictureInfo(r.Context(), g.JID,
+			&whatsmeow.GetProfilePictureParams{Preview: true}); err == nil && pic != nil && pic.URL != "" {
+			item["picture"] = pic.URL
+		}
+		out = append(out, item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "count": len(out), "groups": out})
 }

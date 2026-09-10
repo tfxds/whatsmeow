@@ -85,6 +85,31 @@ func normalizeMessage(connID, tenantID string, m *events.Message) map[string]any
 	}
 
 	msgMap := map[string]any{}
+	// ⚠️ DESEMBRULHA os envelopes antes de normalizar. O WhatsApp embrulha a mensagem real
+	// dentro de ephemeralMessage (mensagens temporárias), viewOnceMessage (ver uma vez) e
+	// documentWithCaptionMessage (documento com legenda). O gateway olhava só o nível de cima:
+	// a mensagem chegava VAZIA no NextFlow e era descartada — quem usa mensagem temporária
+	// simplesmente não aparecia no painel. Desembrulha em cadeia (dá pra ter envelope dentro
+	// de envelope, ex: ver-uma-vez dentro de temporária).
+	if wa := m.Message; wa != nil {
+		for i := 0; i < 4; i++ {
+			switch {
+			case wa.GetEphemeralMessage().GetMessage() != nil:
+				wa = wa.GetEphemeralMessage().GetMessage()
+			case wa.GetViewOnceMessage().GetMessage() != nil:
+				wa = wa.GetViewOnceMessage().GetMessage()
+			case wa.GetViewOnceMessageV2().GetMessage() != nil:
+				wa = wa.GetViewOnceMessageV2().GetMessage()
+			case wa.GetViewOnceMessageV2Extension().GetMessage() != nil:
+				wa = wa.GetViewOnceMessageV2Extension().GetMessage()
+			case wa.GetDocumentWithCaptionMessage().GetMessage() != nil:
+				wa = wa.GetDocumentWithCaptionMessage().GetMessage()
+			default:
+				i = 4
+			}
+		}
+		m.Message = wa
+	}
 	if wa := m.Message; wa != nil {
 		if txt := wa.GetConversation(); txt != "" {
 			msgMap["conversation"] = txt
@@ -95,6 +120,30 @@ func normalizeMessage(connID, tenantID string, m *events.Message) map[string]any
 				em["contextInfo"] = c
 			}
 			msgMap["extendedTextMessage"] = em
+		}
+		// "Apagar para todos" (REVOKE) e edição chegam como protocolMessage, não como texto.
+		// O gateway não repassava nada disso, então a mensagem apagada no celular continuava
+		// aparecendo no painel pra sempre. Repassa no MESMO formato que o webhook do WuzAPI
+		// entrega, pra reaproveitar o tratamento que já existe no NextFlow.
+		if proto := wa.GetProtocolMessage(); proto != nil {
+			k := proto.GetKey()
+			pm := map[string]any{
+				"type": proto.GetType().String(),
+				"key": map[string]any{
+					"id":        k.GetID(),
+					"ID":        k.GetID(),
+					"fromMe":    k.GetFromMe(),
+					"remoteJid": k.GetRemoteJID(),
+				},
+			}
+			if ed := proto.GetEditedMessage(); ed != nil {
+				if t := ed.GetConversation(); t != "" {
+					pm["editedMessage"] = map[string]any{"conversation": t}
+				} else if ext := ed.GetExtendedTextMessage(); ext != nil {
+					pm["editedMessage"] = map[string]any{"extendedTextMessage": map[string]any{"text": ext.GetText()}}
+				}
+			}
+			msgMap["protocolMessage"] = pm
 		}
 		if react := wa.GetReactionMessage(); react != nil {
 			// Reação do cliente: o webhook do NextFlow lê reactionMessage.key.id + .text
