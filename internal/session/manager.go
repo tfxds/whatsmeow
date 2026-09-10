@@ -284,6 +284,28 @@ func (m *Manager) PairCode(connectionID, tenantID, phone string) (string, error)
 	m.sessions[connectionID] = sess
 	m.mu.Unlock()
 
+	// CRÍTICO (mesmo motivo do caminho do QR, logo acima): sem chamar onConnected o
+	// EnsureClient nunca roda, o OnIncomingCall não é registrado, e o número pareado por
+	// CÓDIGO decripta a chamada recebida mas NUNCA toca — só passa a tocar depois de um
+	// restart do serviço. O caminho do QR já tratava isso; o do código não tratava.
+	var registrou sync.Once
+	cli.AddEventHandler(func(evt any) {
+		if _, ok := evt.(*events.PairSuccess); !ok {
+			return
+		}
+		registrou.Do(func() {
+			m.mu.Lock()
+			if sess, ok := m.sessions[connectionID]; ok {
+				sess.Connected = true
+			}
+			m.mu.Unlock()
+			m.log.Infof("PairCode SUCCESS — pareado %s (registrando handler de chamada)", connectionID)
+			if m.onConnected != nil {
+				m.onConnected(connectionID, cli)
+			}
+		})
+	})
+
 	if err := cli.Connect(); err != nil {
 		m.remove(connectionID)
 		return "", fmt.Errorf("connect: %w", err)
