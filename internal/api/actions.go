@@ -46,7 +46,9 @@ func (a *API) handleEdit(w http.ResponseWriter, r *http.Request) {
 	}
 	newMsg := &waE2E.Message{Conversation: proto.String(req.Body)}
 	edited := sess.Client.BuildEdit(jid, types.MessageID(req.MessageID), newMsg)
-	if _, err := sess.Client.SendMessage(r.Context(), jid, edited); err != nil {
+	ctxEnv, cancelEnv := ctxEnvio(r)
+	defer cancelEnv()
+	if _, err := sess.Client.SendMessage(ctxEnv, jid, edited); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -89,7 +91,9 @@ func (a *API) handleDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	// sender vazio = mensagem própria (apagar para todos).
 	revoke := sess.Client.BuildRevoke(jid, types.EmptyJID, types.MessageID(req.MessageID))
-	if _, err := sess.Client.SendMessage(r.Context(), jid, revoke); err != nil {
+	ctxEnv, cancelEnv := ctxEnvio(r)
+	defer cancelEnv()
+	if _, err := sess.Client.SendMessage(ctxEnv, jid, revoke); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -138,7 +142,9 @@ func (a *API) handleReact(w http.ResponseWriter, r *http.Request) {
 		sender = sess.Client.Store.ID.ToNonAD()
 	}
 	react := sess.Client.BuildReaction(jid, sender, types.MessageID(req.MessageID), req.Reaction)
-	if _, err := sess.Client.SendMessage(r.Context(), jid, react); err != nil {
+	ctxEnv, cancelEnv := ctxEnvio(r)
+	defer cancelEnv()
+	if _, err := sess.Client.SendMessage(ctxEnv, jid, react); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

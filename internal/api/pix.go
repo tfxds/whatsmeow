@@ -78,7 +78,9 @@ func (a *API) handleSendPix(w http.ResponseWriter, r *http.Request) {
 	}
 
 	finalMsg := &waE2E.Message{InteractiveMessage: im}
-	resp, err := sess.Client.SendMessage(r.Context(), jid, finalMsg, whatsmeow.SendRequestExtra{AdditionalNodes: nativeFlowNodes()})
+	ctx, cancelEnvio := ctxEnvio(r)
+	defer cancelEnvio()
+	resp, err := sess.Client.SendMessage(ctx, jid, finalMsg, whatsmeow.SendRequestExtra{AdditionalNodes: nativeFlowNodes()})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

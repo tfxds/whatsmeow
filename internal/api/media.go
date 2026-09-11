@@ -118,7 +118,8 @@ func (a *API) handleSendMedia(kind mediaKind) http.HandlerFunc {
 			url = src
 		}
 
-		ctx := r.Context()
+		ctx, cancelEnvio := ctxEnvio(r)
+		defer cancelEnvio()
 		var id string
 		switch kind {
 		case kindImage:

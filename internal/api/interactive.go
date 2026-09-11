@@ -132,7 +132,8 @@ func (a *API) handleSendInteractive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cli := sess.Client
-	ctx := r.Context()
+	ctx, cancelEnvio := ctxEnvio(r)
+	defer cancelEnvio()
 
 	var finalMsg *waE2E.Message
 	var nodes *[]waBinary.Node

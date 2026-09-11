@@ -69,7 +69,9 @@ func (a *API) handleSendText(w http.ResponseWriter, r *http.Request) {
 			},
 		}}
 	}
-	resp, err := sess.Client.SendMessage(r.Context(), jid, msg)
+	ctx, cancelEnvio := ctxEnvio(r)
+	defer cancelEnvio()
+	resp, err := sess.Client.SendMessage(ctx, jid, msg)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

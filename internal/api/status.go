@@ -52,7 +52,8 @@ func (a *API) handleSendStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
+	ctx, cancelEnvio := ctxEnvio(r)
+	defer cancelEnvio()
 	to := types.StatusBroadcastJID // status@broadcast — whatsmeow resolve a audiência
 	caption := req.Caption
 	if caption == "" {

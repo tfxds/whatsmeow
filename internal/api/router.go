@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/nextflow/whatsmeow-gateway/internal/call"
 	"github.com/nextflow/whatsmeow-gateway/internal/session"
@@ -80,6 +81,31 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 // writeError sends a JSON error body with the given status code.
 func writeError(w http.ResponseWriter, code int, msg string) {
 	writeJSON(w, code, map[string]any{"success": false, "error": msg})
+}
+
+// ctxEnvio devolve o contexto para operações que MANDAM mensagem.
+//
+// ⛔ NÃO usar r.Context() em envio. Ele é cancelado no instante em que o cliente HTTP
+// desconecta, e aí o SendMessage aborta NO MEIO da criptografia — o que já saiu, saiu.
+//
+// Isso morde com força em GRUPO: antes da mensagem sair, o whatsmeow precisa estabelecer
+// sessão de sinal com CADA dispositivo de CADA participante, e dispositivo que responde
+// 406 no pedido de prekey faz ele tentar de novo. Um envio assim passa de 30s
+// tranquilamente. Se a conexão cair nesse meio tempo, o log mostra exatamente isto
+// (caso real, grupo "Elite do SaaS", 11/09/2026 11:30-11:31):
+//
+//	Failed to fetch prekeys ... info query returned status 406: not-acceptable
+//	Failed to encrypt ... : failed to check if identity is trusted: context canceled
+//	Server returned different participant list hash ... Some devices may not have
+//	received the message.
+//
+// Ou seja: mensagem entregue PELA METADE, parte do grupo recebe e parte não, e do lado
+// do NextFlow aparece só "socket hang up". Desamarrar o envio do ciclo de vida da
+// requisição faz ele terminar o trabalho mesmo que ninguém esteja mais ouvindo a resposta.
+//
+// WithoutCancel preserva os valores do contexto e descarta só o cancelamento.
+func ctxEnvio(r *http.Request) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(r.Context()), 3*time.Minute)
 }
 
 // extractToken reads the auth token from the "token" header, falling back to a
