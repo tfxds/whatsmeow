@@ -166,6 +166,12 @@ func (m *Manager) Connect(ctx context.Context, connectionID, tenantID string) (*
 
 	dev := m.store.Container.NewDevice()
 	cli := whatsmeow.NewClient(dev, m.log)
+	// Guarda as mensagens enviadas NO BANCO pra poder atender pedido de reenvio (retry
+	// receipt) mesmo depois de reiniciar o serviço. Sem isso o cache é só em memória: o
+	// participante que não conseguiu decriptar pede reenvio, o gateway responde
+	// "couldn't find message" e ESSA PESSOA NUNCA RECEBE. Em grupo é pior, porque basta um
+	// destinatário pedir. Visto ao vivo em 10/09 depois de reiniciar o gateway.
+	cli.UseRetryMessageStore = true
 	sess := &Session{ConnectionID: connectionID, TenantID: tenantID, Client: cli}
 	m.attachHandlers(sess)
 
@@ -278,6 +284,7 @@ func (m *Manager) PairCode(connectionID, tenantID, phone string) (string, error)
 
 	dev := m.store.Container.NewDevice()
 	cli := whatsmeow.NewClient(dev, m.log)
+	cli.UseRetryMessageStore = true // ver comentário na 1ª ocorrência
 	sess := &Session{ConnectionID: connectionID, TenantID: tenantID, Client: cli}
 	m.attachHandlers(sess)
 	m.mu.Lock()
@@ -466,6 +473,7 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 		}
 
 		cli := whatsmeow.NewClient(dev, m.log)
+		cli.UseRetryMessageStore = true // ver comentário na 1ª ocorrência
 		sess := &Session{ConnectionID: conn.ConnectionID, TenantID: conn.TenantID, Client: cli}
 		m.attachHandlers(sess)
 
