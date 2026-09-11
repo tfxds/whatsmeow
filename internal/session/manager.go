@@ -363,6 +363,20 @@ func (m *Manager) PhoneNumber(connectionID string) string {
 }
 
 // attachHandlers wires whatsmeow events to the webhook dispatcher and status.
+// Notify manda um payload pro webhook da conexão, se ela tiver um.
+//
+// Existe pra quem está FORA do fluxo de eventos do whatsmeow precisar avisar o NextFlow —
+// hoje, o envio assíncrono de grupo dizendo que falhou. Sem isso a mensagem ficaria pra
+// sempre como "enviada" na tela, porque a resposta HTTP já saiu com sucesso antes do envio
+// terminar. Reusa o dispatcher (com as retentativas dele) em vez de abrir HTTP na mão.
+func (m *Manager) Notify(connectionID string, payload any) {
+	conn := m.lookupConn(connectionID)
+	if conn == nil || conn.WebhookURL == "" {
+		return
+	}
+	m.dispatcher.Send(conn.WebhookURL, payload)
+}
+
 func (m *Manager) attachHandlers(sess *Session) {
 	connID := sess.ConnectionID
 	tenantID := sess.TenantID
