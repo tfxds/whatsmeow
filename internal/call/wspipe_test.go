@@ -13,8 +13,10 @@ func TestWSPipeMicToReadFrame(t *testing.T) {
 		b[i*2] = 0xFF
 		b[i*2+1] = 0x3F // 0x3FFF = 16383 ~ 0.5
 	}
-	// Prima o jitter buffer (jitterTarget frames) antes de drenar.
-	for i := 0; i < jitterTarget; i++ {
+	// Prima o jitter buffer antes de drenar. A constante `jitterTarget` virou campo
+	// configurável (`p.jitter`, env WSPIPE_JITTER) e o teste ficou sem compilar desde
+	// então — o pacote inteiro não rodava teste. Agora usa o default.
+	for i := 0; i < jitterDefault; i++ {
 		p.PushMic(b)
 	}
 	f, err := p.ReadFrame()
