@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 	"google.golang.org/protobuf/proto"
@@ -20,10 +21,15 @@ type sendStatusRequest struct {
 	Type            string `json:"Type"` // text|image|video|audio
 	Text            string `json:"Text"`
 	Caption         string `json:"Caption"`
-	File            string `json:"File"`     // URL da mídia
+	File            string `json:"File"` // URL da mídia
 	Mimetype        string `json:"Mimetype"`
 	BackgroundColor int    `json:"BackgroundColor"` // índice 1-19 (status de texto)
 	Font            int    `json:"Font"`            // 0,1,2,6,7,8,9,10
+	// Audiência explícita (igual "recipients"/"max_recipients" da uazapi). Vazio = contatos
+	// salvos do aparelho (regra da lib). Números são conferidos no WhatsApp; os que não
+	// existem voltam em "discarded".
+	Recipients    []string `json:"Recipients"`
+	MaxRecipients int      `json:"MaxRecipients"`
 }
 
 // Índice de cor UAZAPI (1-19) → ARGB (alpha 0xFF). Mantém paridade visual com BTZap/Evolution.
@@ -54,6 +60,59 @@ func (a *API) handleSendStatus(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancelEnvio := ctxEnvio(r)
 	defer cancelEnvio()
+
+	var discarded []map[string]string
+	audiencia := 0
+	if len(req.Recipients) > 0 {
+		vistos := map[string]bool{}
+		var phones []string
+		for _, n := range req.Recipients {
+			d := strings.Map(func(c rune) rune {
+				if c >= '0' && c <= '9' {
+					return c
+				}
+				return -1
+			}, strings.Split(n, "@")[0])
+			if len(d) < 8 {
+				discarded = append(discarded, map[string]string{"number": n, "reason": "invalid_format"})
+				continue
+			}
+			if vistos[d] {
+				discarded = append(discarded, map[string]string{"number": n, "reason": "duplicate"})
+				continue
+			}
+			vistos[d] = true
+			phones = append(phones, "+"+d)
+		}
+		var jids []types.JID
+		for i := 0; i < len(phones); i += 50 { // lote: uma consulta por 50 números
+			fim := i + 50
+			if fim > len(phones) {
+				fim = len(phones)
+			}
+			res, err := sess.Client.IsOnWhatsApp(ctx, phones[i:fim])
+			if err != nil {
+				writeError(w, http.StatusBadGateway, "falha ao conferir números: "+err.Error())
+				return
+			}
+			for _, x := range res {
+				if x.IsIn {
+					jids = append(jids, x.JID)
+				} else {
+					discarded = append(discarded, map[string]string{"number": x.Query, "reason": "not_on_whatsapp"})
+				}
+			}
+		}
+		if req.MaxRecipients > 0 && len(jids) > req.MaxRecipients {
+			jids = jids[:req.MaxRecipients]
+		}
+		if len(jids) == 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "error": "nenhum destinatário válido", "discarded": discarded})
+			return
+		}
+		audiencia = len(jids)
+		ctx = whatsmeow.WithStatusRecipients(ctx, jids)
+	}
 	to := types.StatusBroadcastJID // status@broadcast — whatsmeow resolve a audiência
 	caption := req.Caption
 	if caption == "" {
@@ -105,5 +164,5 @@ func (a *API) handleSendStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"success": true, "id": id})
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "id": id, "recipients": audiencia, "discarded": discarded})
 }
