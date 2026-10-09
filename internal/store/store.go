@@ -82,6 +82,27 @@ func (s *Store) DeleteConnByJID(ctx context.Context, jid string) error {
 	return nil
 }
 
+// ConnJID devolve o jid gravado pra uma conexão ("" se não pareou ou não existe).
+func (s *Store) ConnJID(ctx context.Context, connectionID string) (string, error) {
+	var jid sql.NullString
+	err := s.DB.QueryRowContext(ctx, `SELECT jid FROM connections WHERE connection_id = $1`, connectionID).Scan(&jid)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("conn jid: %w", err)
+	}
+	return jid.String, nil
+}
+
+// DeleteConn remove a linha da conexão (mesmo sem jid: conexão que nunca pareou).
+func (s *Store) DeleteConn(ctx context.Context, connectionID string) error {
+	if _, err := s.DB.ExecContext(ctx, `DELETE FROM connections WHERE connection_id = $1`, connectionID); err != nil {
+		return fmt.Errorf("delete conn: %w", err)
+	}
+	return nil
+}
+
 // ListConns returns all stored connections.
 func (s *Store) ListConns(ctx context.Context) ([]Conn, error) {
 	const q = `SELECT connection_id, tenant_id, jid, webhook_url, token FROM connections ORDER BY created_at`

@@ -59,6 +59,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/admin/sessions", a.handleAdminSessions) // GET lista | DELETE ?jid= remove
 
 	// Sync/manutenção (equivalente aos botões dos outros providers)
+	mux.HandleFunc("/session/disconnect", a.handleDisconnect) // POST {connectionId} — sai da conta (logout + apaga device)
 	mux.HandleFunc("/session/restart", a.handleRestart)   // POST {connectionId} — reconecta
 	mux.HandleFunc("/contacts/list", a.handleContacts)    // POST {connectionId} — lista contatos
 	mux.HandleFunc("/groups/list", a.handleGroups)        // POST {connectionId} — lista grupos

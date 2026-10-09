@@ -56,6 +56,24 @@ func (a *API) handleRestart(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "connected": sess.Client.IsConnected()})
 }
 
+// handleDisconnect — POST {connectionId}: sai da conta do WhatsApp de verdade (ver Manager.Logout).
+// O próximo QR começa do zero.
+func (a *API) handleDisconnect(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	connID, ok := a.decodeConn(w, r)
+	if !ok {
+		return
+	}
+	if err := a.Mgr.Logout(r.Context(), connID); err != nil {
+		writeError(w, http.StatusInternalServerError, "logout failed: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
 // handleContacts — POST {connectionId}: lista todos os contatos do device (Store.Contacts).
 // O backend faz o upsert em crm_contacts. Retorna {phone, name, pushName, business}.
 func (a *API) handleContacts(w http.ResponseWriter, r *http.Request) {

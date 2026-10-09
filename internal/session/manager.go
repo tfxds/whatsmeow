@@ -145,6 +145,40 @@ func (m *Manager) RemoveByJID(ctx context.Context, jid string) error {
 	return nil
 }
 
+// Logout é o "Desconectar" do NextFlow: tira o aparelho da conta do WhatsApp (o celular deixa
+// de listar "NextFlow" em Aparelhos conectados), apaga o device e a linha da conexão. Antes o
+// botão só marcava "desconectado" no banco do NextFlow: o device seguia logado, o próximo QR
+// "conectava sozinho" e conexão recriada deixava sessão órfã com o mesmo número, que no reinício
+// do servidor derrubava a nova ("stream replaced": recebia e não enviava, vox 09/10/2026).
+func (m *Manager) Logout(ctx context.Context, connectionID string) error {
+	jid := ""
+	m.mu.RLock()
+	if s, ok := m.sessions[connectionID]; ok && s.Client != nil && s.Client.Store != nil && s.Client.Store.ID != nil {
+		jid = s.Client.Store.ID.String()
+	}
+	m.mu.RUnlock()
+	if jid == "" {
+		if j, err := m.store.ConnJID(ctx, connectionID); err == nil {
+			jid = j
+		}
+	}
+	if jid != "" {
+		if err := m.RemoveByJID(ctx, jid); err != nil {
+			return err
+		}
+	}
+	// Sessão sem device (QR aberto, nunca pareou) também sai da memória.
+	m.mu.Lock()
+	if s, ok := m.sessions[connectionID]; ok {
+		if s.Client != nil {
+			s.Client.Disconnect()
+		}
+		delete(m.sessions, connectionID)
+	}
+	m.mu.Unlock()
+	return m.store.DeleteConn(ctx, connectionID)
+}
+
 // Connect returns the existing session for connectionID or creates and connects
 // a new one. If the device is not yet paired it starts the QR flow.
 func (m *Manager) Connect(ctx context.Context, connectionID, tenantID string) (*Session, error) {
