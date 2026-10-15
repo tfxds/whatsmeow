@@ -25,6 +25,7 @@ func main() {
 		log.Fatalf("store open error: %v", err)
 	}
 	disp := webhook.New()
+	disp.EnablePersistence(st.DB) // fila durável: webhook que falhar é reenviado depois
 	mgr := session.NewManager(st, disp)
 	calls := call.NewManager()
 
