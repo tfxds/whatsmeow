@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"go.mau.fi/whatsmeow"
@@ -22,6 +23,8 @@ type sendTextRequest struct {
 	QuotedID     string `json:"QuotedID"`     // id da msg citada (responder)
 	QuotedFromMe bool   `json:"QuotedFromMe"` // a msg citada é minha?
 	QuotedText   string `json:"QuotedText"`   // texto da msg citada (pra renderizar o balão)
+	// QuotedParticipant: em GRUPO, quem escreveu a msg citada (telefone ou LID, só dígitos ou JID).
+	QuotedParticipant string `json:"QuotedParticipant"`
 }
 
 // handleSendText sends a plain text WhatsApp message via the named connection.
@@ -63,17 +66,28 @@ func (a *API) handleSendText(w http.ResponseWriter, r *http.Request) {
 	// ExtendedTextMessage porque Conversation não carrega ContextInfo.
 	if req.QuotedID != "" {
 		participant := jid
+		citar := true
 		if req.QuotedFromMe && sess.Client.Store.ID != nil {
 			participant = sess.Client.Store.ID.ToNonAD()
+		} else if jid.Server == types.GroupServer {
+			// GRUPO: o autor da citada NUNCA pode ser o grupo. Com o JID do grupo aqui o WhatsApp
+			// atribui a citação a outra pessoa e marca o grupo inteiro (sys-admin, 10/10/2026).
+			// Sem o autor, manda SEM citação (melhor que marcar todo mundo).
+			citar = false
+			if p, ok := jidDoAutor(req.QuotedParticipant); ok {
+				participant, citar = p, true
+			}
 		}
-		msg = &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
-			Text: proto.String(req.Body),
-			ContextInfo: &waE2E.ContextInfo{
-				StanzaID:      proto.String(req.QuotedID),
-				Participant:   proto.String(participant.String()),
-				QuotedMessage: &waE2E.Message{Conversation: proto.String(req.QuotedText)},
-			},
-		}}
+		if citar {
+			msg = &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+				Text: proto.String(req.Body),
+				ContextInfo: &waE2E.ContextInfo{
+					StanzaID:      proto.String(req.QuotedID),
+					Participant:   proto.String(participant.String()),
+					QuotedMessage: &waE2E.Message{Conversation: proto.String(req.QuotedText)},
+				},
+			}}
+		}
 	}
 	// GRUPO: responde JÁ e manda em segundo plano.
 	//
@@ -131,4 +145,31 @@ func (a *API) enviarGrupoEmSegundoPlano(sess *session.Session, jid types.JID, ms
 		return
 	}
 	fmt.Printf("[SEND-GRUPO] %s id=%s entregue em %s\n", jid, id, decorrido)
+}
+
+// jidDoAutor converte o autor da msg citada (JID completo ou só dígitos) em JID. Só dígitos:
+// telefone tem até 13 (BR com 9) → @s.whatsapp.net; 14 ou mais é LID → @lid. Mesma regra do
+// provider WuzAPI do NextFlow.
+func jidDoAutor(bruto string) (types.JID, bool) {
+	bruto = strings.TrimSpace(bruto)
+	if bruto == "" {
+		return types.JID{}, false
+	}
+	if strings.Contains(bruto, "@") {
+		j, err := types.ParseJID(bruto)
+		return j, err == nil
+	}
+	dig := strings.Map(func(r rune) rune {
+		if r >= '0' && r <= '9' {
+			return r
+		}
+		return -1
+	}, bruto)
+	if dig == "" {
+		return types.JID{}, false
+	}
+	if len(dig) >= 14 {
+		return types.NewJID(dig, types.HiddenUserServer), true
+	}
+	return types.NewJID(dig, types.DefaultUserServer), true
 }
