@@ -193,7 +193,7 @@ func (a *API) BridgeAudioSocket(conn *asterisk.Conn) {
 			log.Printf("[bridge] 1º frame do Asterisk = %d bytes → acumulando em frames de %d (uplink)", len(s16), frame16)
 			first = false
 		}
-		upBuf = append(upBuf, asterisk.Up8to16(s16)...)
+		upBuf = append(upBuf, asterisk.Up8to16(asterisk.LimitarFrame(s16))...)
 		for len(upBuf) >= frame16 {
 			pipe.PushMic(upBuf[:frame16])
 			upBuf = upBuf[frame16:]

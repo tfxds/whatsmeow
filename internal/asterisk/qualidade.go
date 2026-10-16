@@ -101,3 +101,18 @@ func RampaEntrada(frame []byte, amostras int) []byte {
 	}
 	return out
 }
+
+// LimitarFrame aplica só o joelho suave (sem baixar o ganho) num frame s16le — no sentido
+// ramal → celular, pra grito/microfonia do lado do atendente não chegar estourado no cliente.
+func LimitarFrame(frame []byte) []byte {
+	out := make([]byte, len(frame))
+	for i := 0; i+1 < len(frame); i += 2 {
+		v := float64(int16(binary.LittleEndian.Uint16(frame[i:])))
+		const joelho = 22000.0
+		if a := math.Abs(v); a > joelho {
+			v = math.Copysign(joelho+(31000-joelho)*math.Tanh((a-joelho)/(31000-joelho)), v)
+		}
+		binary.LittleEndian.PutUint16(out[i:], uint16(int16(v)))
+	}
+	return out
+}
