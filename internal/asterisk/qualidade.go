@@ -116,3 +116,50 @@ func LimitarFrame(frame []byte) []byte {
 	}
 	return out
 }
+
+// Energia devolve o RMS de um frame s16le.
+func Energia(frame []byte) float64 {
+	n := len(frame) / 2
+	if n == 0 {
+		return 0
+	}
+	soma := 0.0
+	for i := 0; i < n; i++ {
+		v := float64(int16(binary.LittleEndian.Uint16(frame[i*2:])))
+		soma += v * v
+	}
+	return math.Sqrt(soma / float64(n))
+}
+
+// LimiarFala separa fala de ruído de fundo (RMS em s16). Abaixo disso o frame é "silêncio".
+const LimiarFala = 500.0
+
+// Conforto gera ruído de conforto (s16le, `bytes` bytes) no nível `rms`, levemente abafado
+// (passa-baixa de 1 polo) pra soar como o fundo da ligação e não como chiado.
+// 16/10/2026: no silêncio o WhatsApp manda pouco pacote; repetir o último frame cada vez mais
+// baixo e voltar em rampa fazia o ruído de fundo sumir e voltar, o "som de chupada".
+type Conforto struct {
+	semente uint32
+	ant     float64
+}
+
+func (c *Conforto) Frame(bytes int, rms float64) []byte {
+	out := make([]byte, bytes)
+	if c.semente == 0 {
+		c.semente = 0x9e3779b9
+	}
+	ganho := rms * 3.0 // compensa o abafamento do filtro (sai ~85% do fundo real)
+	for i := 0; i+1 < bytes; i += 2 {
+		c.semente = c.semente*1664525 + 1013904223
+		x := (float64(c.semente>>8)/float64(1<<24))*2 - 1
+		c.ant = 0.6*c.ant + 0.4*x
+		v := c.ant * ganho
+		if v > 3000 {
+			v = 3000
+		} else if v < -3000 {
+			v = -3000
+		}
+		binary.LittleEndian.PutUint16(out[i:], uint16(int16(v)))
+	}
+	return out
+}

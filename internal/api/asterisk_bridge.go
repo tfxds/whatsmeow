@@ -106,6 +106,8 @@ func (a *API) BridgeAudioSocket(conn *asterisk.Conn) {
 		var amostra int   // posição no ciclo do tom (contínua, sem estalo entre frames)
 		var ultimo []byte // último frame real (pra disfarçar falha de pacote)
 		faltas := 0
+		fundo := 0.0 // nível do ruído de fundo (média dos frames sem fala)
+		var conforto asterisk.Conforto
 		for {
 			select {
 			case <-pumpStop:
@@ -114,7 +116,11 @@ func (a *API) BridgeAudioSocket(conn *asterisk.Conn) {
 				var frame []byte
 				select {
 				case frame = <-downQ:
-					if faltas > 0 { // voltou depois de buraco: entra em rampa, sem clique
+					e := asterisk.Energia(frame)
+					if e < asterisk.LimiarFala {
+						fundo = 0.9*fundo + 0.1*e
+					}
+					if faltas > 0 && e >= asterisk.LimiarFala { // voltou FALANDO depois de buraco: rampa, sem clique
 						frame = asterisk.RampaEntrada(frame, 40)
 					}
 					faltas = 0
@@ -123,6 +129,11 @@ func (a *API) BridgeAudioSocket(conn *asterisk.Conn) {
 					switch {
 					case tocar && !temVoz.Load():
 						frame = tomDeChamada(&amostra)
+					case ultimo != nil && asterisk.Energia(ultimo) < asterisk.LimiarFala:
+						// buraco no SILÊNCIO: segura o fundo no mesmo nível (ruído de conforto) em vez de
+						// sumir e voltar, que era o "som de chupada" (16/10/2026)
+						faltas++
+						frame = conforto.Frame(len(silence), fundo)
 					case ultimo != nil && faltas < 3:
 						// pacote atrasou no meio da fala: repete o último cada vez mais baixo em vez de
 						// cair seco no silêncio (o degrau é o "estouro")
