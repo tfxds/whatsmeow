@@ -57,8 +57,9 @@ func (a *API) BridgeAudioSocket(conn *asterisk.Conn) {
 	// Chegou voz de verdade do WhatsApp? Até lá, na DISCAGEM, o pump toca o tom de chamada
 	// (sem isso quem liga pelo ramal fica no silêncio até o outro lado atender).
 	var temVoz atomic.Bool
+	dec := &asterisk.Decimador16to8{} // filtro + limitador (antes: média de 2 amostras, sem controle de volume)
 	pipe := call.NewWSPipe(func(s16 []byte) {
-		down := asterisk.Down16to8(s16)
+		down := dec.Processar(s16)
 		temVoz.Store(true)
 		downOnce.Do(func() {
 			log.Printf("[bridge] 1º frame downlink: meowcaller=%d bytes → asterisk=%d bytes (fatiado 20ms)", len(s16), len(down))
@@ -102,7 +103,9 @@ func (a *API) BridgeAudioSocket(conn *asterisk.Conn) {
 		tick := time.NewTicker(20 * time.Millisecond)
 		defer tick.Stop()
 		tocar := intent.kind == "dial"
-		var amostra int // posição no ciclo do tom (contínua, sem estalo entre frames)
+		var amostra int   // posição no ciclo do tom (contínua, sem estalo entre frames)
+		var ultimo []byte // último frame real (pra disfarçar falha de pacote)
+		faltas := 0
 		for {
 			select {
 			case <-pumpStop:
@@ -111,10 +114,22 @@ func (a *API) BridgeAudioSocket(conn *asterisk.Conn) {
 				var frame []byte
 				select {
 				case frame = <-downQ:
+					if faltas > 0 { // voltou depois de buraco: entra em rampa, sem clique
+						frame = asterisk.RampaEntrada(frame, 40)
+					}
+					faltas = 0
+					ultimo = frame
 				default:
-					if tocar && !temVoz.Load() {
+					switch {
+					case tocar && !temVoz.Load():
 						frame = tomDeChamada(&amostra)
-					} else {
+					case ultimo != nil && faltas < 3:
+						// pacote atrasou no meio da fala: repete o último cada vez mais baixo em vez de
+						// cair seco no silêncio (o degrau é o "estouro")
+						faltas++
+						frame = asterisk.Atenuar(ultimo, math.Pow(0.4, float64(faltas)))
+					default:
+						faltas++
 						frame = silence
 					}
 				}
