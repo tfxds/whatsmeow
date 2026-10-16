@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"math"
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/nextflow/whatsmeow-gateway/internal/asterisk"
@@ -49,11 +51,15 @@ func (a *API) BridgeAudioSocket(conn *asterisk.Conn) {
 	// o que DERRUBAVA a perna SIP. Solução: o meowcaller enfileira chunks de 20ms e um PUMP manda
 	// 20ms A CADA 20ms SEMPRE (chunk real quando tem na fila, silêncio quando não), mantendo a
 	// perna SIP viva desde o instante em que o AudioSocket conecta.
-	const chunk8k = 320 // 20ms de slin 8k
+	const chunk8k = 320            // 20ms de slin 8k
 	downQ := make(chan []byte, 12) // teto ~240ms; drop-oldest pra não crescer latência
 	var downOnce sync.Once
+	// Chegou voz de verdade do WhatsApp? Até lá, na DISCAGEM, o pump toca o tom de chamada
+	// (sem isso quem liga pelo ramal fica no silêncio até o outro lado atender).
+	var temVoz atomic.Bool
 	pipe := call.NewWSPipe(func(s16 []byte) {
 		down := asterisk.Down16to8(s16)
+		temVoz.Store(true)
 		downOnce.Do(func() {
 			log.Printf("[bridge] 1º frame downlink: meowcaller=%d bytes → asterisk=%d bytes (fatiado 20ms)", len(s16), len(down))
 		})
@@ -95,6 +101,8 @@ func (a *API) BridgeAudioSocket(conn *asterisk.Conn) {
 		}
 		tick := time.NewTicker(20 * time.Millisecond)
 		defer tick.Stop()
+		tocar := intent.kind == "dial"
+		var amostra int // posição no ciclo do tom (contínua, sem estalo entre frames)
 		for {
 			select {
 			case <-pumpStop:
@@ -104,7 +112,11 @@ func (a *API) BridgeAudioSocket(conn *asterisk.Conn) {
 				select {
 				case frame = <-downQ:
 				default:
-					frame = silence
+					if tocar && !temVoz.Load() {
+						frame = tomDeChamada(&amostra)
+					} else {
+						frame = silence
+					}
 				}
 				if err := conn.WriteAudio(frame); err != nil {
 					return
@@ -140,8 +152,8 @@ func (a *API) BridgeAudioSocket(conn *asterisk.Conn) {
 	// do Asterisk recebe EOF e derruba o ramal SIP (senão o softphone fica "pendurado").
 	mcall.OnEnd(func(reason string) {
 		log.Printf("[bridge] chamada WhatsApp encerrou (%s) → HANGUP no AudioSocket (encerra SIP)", reason)
-		stopPump()                // para o silêncio antes de mandar o HANGUP
-		_ = conn.WriteHangup()    // frame 0x00 → app_audiosocket sai limpo → dialplan Hangup → BYE
+		stopPump()                                                       // para o silêncio antes de mandar o HANGUP
+		_ = conn.WriteHangup()                                           // frame 0x00 → app_audiosocket sai limpo → dialplan Hangup → BYE
 		go func() { time.Sleep(200 * time.Millisecond); conn.Close() }() // fallback: fecha o TCP
 	})
 	defer func() {
@@ -227,4 +239,23 @@ func (a *API) handleAsteriskDial(w http.ResponseWriter, r *http.Request) {
 	}
 	asIntents.Store(uuid, &asIntent{kind: "dial", connID: connID, phone: callDigitsOnly(phone)})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// tomDeChamada devolve 20 ms (160 amostras slin 8 kHz) do toque de chamada brasileiro (Anatel):
+// 425 Hz, 1 s tocando e 4 s em silêncio. `amostra` guarda a posição pra o próximo frame continuar
+// a onda de onde parou.
+func tomDeChamada(amostra *int) []byte {
+	const taxa, ciclo, ligado = 8000, 5 * 8000, 8000
+	out := make([]byte, 320)
+	for i := 0; i < 160; i++ {
+		n := *amostra % ciclo
+		var v int16
+		if n < ligado {
+			v = int16(6000 * math.Sin(2*math.Pi*425*float64(n)/taxa))
+		}
+		out[2*i] = byte(v)
+		out[2*i+1] = byte(uint16(v) >> 8)
+		*amostra++
+	}
+	return out
 }
