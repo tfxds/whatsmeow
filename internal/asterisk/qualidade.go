@@ -134,6 +134,14 @@ func Energia(frame []byte) float64 {
 // LimiarFala separa fala de ruído de fundo (RMS em s16). Abaixo disso o frame é "silêncio".
 const LimiarFala = 500.0
 
+// LimiarFundo: abaixo disso o quadro é só ruído de fundo (fala fraca começa por volta de 300-500).
+// FundoConforto: nível FIXO do fundo no silêncio, igual pros quadros de ruído e pros buracos, pra o
+// ouvido não perceber o fundo ligando e desligando (16/10/2026).
+const (
+	LimiarFundo   = 200.0
+	FundoConforto = 22.0
+)
+
 // Conforto gera ruído de conforto (s16le, `bytes` bytes) no nível `rms`, levemente abafado
 // (passa-baixa de 1 polo) pra soar como o fundo da ligação e não como chiado.
 // 16/10/2026: no silêncio o WhatsApp manda pouco pacote; repetir o último frame cada vez mais

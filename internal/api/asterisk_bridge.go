@@ -106,7 +106,6 @@ func (a *API) BridgeAudioSocket(conn *asterisk.Conn) {
 		var amostra int   // posição no ciclo do tom (contínua, sem estalo entre frames)
 		var ultimo []byte // último frame real (pra disfarçar falha de pacote)
 		faltas := 0
-		fundo := 0.0 // nível do ruído de fundo (média dos frames sem fala)
 		var conforto asterisk.Conforto
 		for {
 			select {
@@ -117,8 +116,11 @@ func (a *API) BridgeAudioSocket(conn *asterisk.Conn) {
 				select {
 				case frame = <-downQ:
 					e := asterisk.Energia(frame)
-					if e < asterisk.LimiarFala {
-						fundo = 0.9*fundo + 0.1*e
+					// Silêncio do WhatsApp (DTX): chega um quadro de ruído de vez em quando e o resto é zero.
+					// Medido 16/10: o fundo piscava 150-250 vezes por minuto entre chiado e mudo = o "som
+					// de chupada". Quadro só de ruído vira o MESMO fundo constante dos buracos.
+					if e < asterisk.LimiarFundo {
+						frame = conforto.Frame(len(frame), asterisk.FundoConforto)
 					}
 					if faltas > 0 && e >= asterisk.LimiarFala { // voltou FALANDO depois de buraco: rampa, sem clique
 						frame = asterisk.RampaEntrada(frame, 40)
@@ -133,7 +135,7 @@ func (a *API) BridgeAudioSocket(conn *asterisk.Conn) {
 						// buraco no SILÊNCIO: segura o fundo no mesmo nível (ruído de conforto) em vez de
 						// sumir e voltar, que era o "som de chupada" (16/10/2026)
 						faltas++
-						frame = conforto.Frame(len(silence), fundo)
+						frame = conforto.Frame(len(silence), asterisk.FundoConforto)
 					case ultimo != nil && faltas < 3:
 						// pacote atrasou no meio da fala: repete o último cada vez mais baixo em vez de
 						// cair seco no silêncio (o degrau é o "estouro")
